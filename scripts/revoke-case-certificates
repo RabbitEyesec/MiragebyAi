@@ -1,0 +1,105 @@
+#!/usr/bin/env python3
+"""Revoke case-observed agent certificates in Postgres and step-ca."""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import stat
+from pathlib import Path
+
+import psycopg
+
+from mirage_common.step_ca_client import revoke_certificate
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--case-id", required=True)
+    parser.add_argument("--serial", action="append")
+    parser.add_argument("--ca-url", required=True)
+    parser.add_argument("--root-cert", required=True)
+    parser.add_argument(
+        "--token-file",
+        type=Path,
+        required=True,
+        help="0600 JSON object mapping each serial to a short-lived step-ca revoke token",
+    )
+    parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--confirm")
+    args = parser.parse_args()
+    if stat.S_IMODE(args.token_file.stat().st_mode) & 0o077:
+        parser.error("--token-file must not be group/world accessible")
+    dsn = os.environ.get("MIRAGE_POSTGRES_DSN")
+    if not dsn:
+        parser.error("MIRAGE_POSTGRES_DSN must be supplied through the environment")
+    tokens = json.loads(args.token_file.read_text())
+    with psycopg.connect(dsn) as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT DISTINCT a.certificate_serial,a.agent_id
+            FROM evidence_objects e
+            JOIN agents a ON a.certificate_serial=e.source_certificate_serial
+            WHERE e.case_id=%s AND e.source_certificate_serial IS NOT NULL
+            ORDER BY a.certificate_serial
+            """,
+            (args.case_id,),
+        )
+        observed = dict(cur.fetchall())
+        serials = args.serial or list(observed)
+        unknown = sorted(set(serials) - set(observed))
+        if unknown:
+            parser.error(f"serials are not observed for the exact case: {unknown}")
+        plan = [
+            {"serial": serial, "agent_id": observed[serial], "ca_revoke_token_present": serial in tokens}
+            for serial in serials
+        ]
+        print(json.dumps({"case_id": args.case_id, "dry_run": args.dry_run, "certificates": plan}, indent=2))
+        if args.dry_run:
+            return 0
+        expected = f"REVOKE {args.case_id}"
+        if args.confirm != expected:
+            parser.error(f"--confirm must equal {expected!r}")
+        missing_tokens = [serial for serial in serials if not tokens.get(serial)]
+        if missing_tokens:
+            parser.error(f"missing step-ca revoke tokens: {missing_tokens}")
+        for serial in serials:
+            agent_id = observed[serial]
+            cur.execute(
+                """
+                UPDATE agents SET status='REVOKED',revoked_at=now(),
+                    revoked_reason='case teardown'
+                WHERE agent_id=%s AND certificate_serial=%s
+                """,
+                (agent_id, serial),
+            )
+            cur.execute(
+                """
+                INSERT INTO certificate_history
+                    (agent_id,certificate_serial,action,detail)
+                VALUES (%s,%s,'REVOKED',%s)
+                """,
+                (agent_id, serial, f"case teardown {args.case_id}"),
+            )
+        conn.commit()
+        failed: list[dict[str, str]] = []
+        for serial in serials:
+            try:
+                revoke_certificate(
+                    ca_url=args.ca_url,
+                    root_cert_path=args.root_cert,
+                    serial_base10=serial,
+                    token=tokens[serial],
+                    reason=f"Mirage case teardown {args.case_id}",
+                )
+            except Exception as exc:  # noqa: BLE001 -- record every CA-side failure
+                failed.append({"serial": serial, "error": f"{type(exc).__name__}: {exc}"})
+        if failed:
+            print(json.dumps({"result": "BLOCKED", "ca_failures": failed}, indent=2))
+            return 1
+    print(json.dumps({"result": "PASS", "revoked_serials": serials}, indent=2))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

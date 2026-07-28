@@ -1,0 +1,48 @@
+#!/usr/bin/env python3
+"""Generates the ed25519 keypair the dev sandbox target's SSH broker-entry
+service (infra/compose/docker-compose.dev-sandbox.yml) authenticates with
+(Step 7b). Idempotent — re-running reuses an existing keypair rather than
+rotating it, matching scripts/bootstrap-step-ca-provisioners' pattern.
+
+Prints the export line to add to .env (MIRAGE_DEV_SANDBOX_SSH_PUBLIC_KEY),
+matching the shape docker compose's ${VAR:?...} required-var syntax expects.
+"""
+from __future__ import annotations
+
+from pathlib import Path
+
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import ed25519
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+KEYS_DIR = REPO_ROOT / ".dev-sandbox-keys"  # gitignored, see .gitignore
+PRIVATE_KEY_PATH = KEYS_DIR / "dev_sandbox_ssh_key"
+PUBLIC_KEY_PATH = KEYS_DIR / "dev_sandbox_ssh_key.pub"
+
+
+def main() -> int:
+    KEYS_DIR.mkdir(parents=True, exist_ok=True)
+    if PRIVATE_KEY_PATH.exists() and PUBLIC_KEY_PATH.exists():
+        print(f"Reusing existing keypair at {KEYS_DIR}")
+    else:
+        key = ed25519.Ed25519PrivateKey.generate()
+        private_bytes = key.private_bytes(
+            serialization.Encoding.PEM, serialization.PrivateFormat.OpenSSH, serialization.NoEncryption()
+        )
+        public_bytes = key.public_key().public_bytes(serialization.Encoding.OpenSSH, serialization.PublicFormat.OpenSSH)
+        PRIVATE_KEY_PATH.write_bytes(private_bytes)
+        PRIVATE_KEY_PATH.chmod(0o600)
+        PUBLIC_KEY_PATH.write_bytes(public_bytes + b"\n")
+        print(f"Generated new keypair at {KEYS_DIR}")
+
+    public_key = PUBLIC_KEY_PATH.read_text().strip()
+    print()
+    print("Add to .env:")
+    print(f'MIRAGE_DEV_SANDBOX_SSH_PUBLIC_KEY="{public_key}"')
+    print()
+    print(f"Connect once the dev sandbox is up: ssh -i {PRIVATE_KEY_PATH} -p 2222 employee01@localhost")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

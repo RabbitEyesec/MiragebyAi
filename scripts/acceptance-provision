@@ -1,0 +1,38 @@
+#!/usr/bin/env python3
+"""Plan or execute clean local/Profile A/Profile B acceptance provisioning."""
+from __future__ import annotations
+
+import argparse
+import json
+import subprocess
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--profile", choices=("local", "profile-a", "profile-b"), required=True)
+    parser.add_argument("--execute", action="store_true")
+    parser.add_argument("--confirm")
+    parser.add_argument("--var-file", type=Path)
+    args = parser.parse_args()
+    if args.profile == "local":
+        command = ["docker", "compose", "--env-file", ".env", "-f", "infra/compose/docker-compose.development.yml", "up", "-d", "--build"]
+        confirmation = "PROVISION local"
+    else:
+        environment = "acceptance" if args.profile == "profile-b" else "dev"
+        directory = ROOT / "infra" / "terraform" / "environments" / environment
+        var_file = (args.var_file or directory / "terraform.tfvars").resolve()
+        command = ["terraform", f"-chdir={directory}", "apply", f"-var-file={var_file}"]
+        confirmation = f"PROVISION {args.profile}"
+    print(json.dumps({"profile": args.profile, "command": command, "execute": args.execute}, indent=2))
+    if not args.execute:
+        return 0
+    if args.confirm != confirmation:
+        parser.error(f"--confirm must equal {confirmation!r}")
+    return subprocess.run(command, cwd=ROOT, check=False).returncode
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

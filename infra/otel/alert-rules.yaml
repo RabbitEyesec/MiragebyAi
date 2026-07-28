@@ -1,0 +1,55 @@
+groups:
+  - name: mirage-critical
+    rules:
+      - alert: MirageCriticalWorkerFailure
+        expr: mirage_worker_heartbeat_age > 60
+        for: 0s
+        labels: {severity: critical}
+      - alert: MirageAgentHeartbeatWarning
+        expr: mirage_agent_heartbeat_delay > 30
+        for: 0s
+        labels: {severity: warning}
+      - alert: MirageAgentOffline
+        expr: mirage_agent_heartbeat_delay > 90
+        for: 0s
+        labels: {severity: critical}
+      - alert: MirageNatsConsumerLag
+        expr: mirage_nats_consumer_lag_messages > 10000 or mirage_nats_consumer_lag_seconds > 30
+        for: 0s
+        labels: {severity: warning}
+      - alert: MirageClockOffset
+        expr: abs(mirage_clock_offset_seconds) > 5
+        for: 0s
+        labels: {severity: warning}
+      - alert: MirageEvidenceVerificationFailure
+        expr: increase(mirage_evidence_verification_failure[1m]) > 0
+        for: 0s
+        labels: {severity: critical}
+      - alert: MirageS3WriteFailure
+        expr: increase(mirage_s3_write_failure[1m]) > 0
+        for: 0s
+        labels: {severity: critical}
+      - alert: MirageDeadLetterEvent
+        expr: increase(mirage_nats_dead_letter_total[1m]) > 0
+        for: 0s
+        labels: {severity: warning}
+      - alert: MirageAIBudgetWarning
+        expr: mirage_ai_budget_usage_percent >= mirage_ai_budget_warning_percent
+        for: 0s
+        labels: {severity: warning}
+      - alert: MirageAIHardBudgetStop
+        expr: mirage_ai_budget_remaining_gbp <= 0
+        for: 0s
+        labels: {severity: critical}
+      - alert: MirageCertificateRenewalFailure
+        expr: mirage_certificate_expiry_seconds / mirage_certificate_lifetime_seconds < 0.20
+        for: 0s
+        labels: {severity: critical}
+      - alert: MirageDashboardProjectionLag
+        expr: mirage_dashboard_projection_lag > mirage_dashboard_projection_lag_threshold
+        for: 0s
+        labels: {severity: warning}
+      - alert: MirageRepeatedPolicyDenial
+        expr: increase(mirage_policy_deny_total[5m]) > 10
+        for: 0s
+        labels: {severity: warning}

@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mirage.internal/schemas/events/steering.decision_recorded.v1.schema.json",
+  "title": "SteeringDecisionRecordedPayload",
+  "description": "Payload for event_type=steering.decision_recorded, schema_version major=1. Emitted whenever /route selects a backend (Step 8a, §6.1) and whenever a routing_decisions row is created/revoked via POST /api/v1/cases/{id}/steer[/revoke].",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["decision_id", "case_id", "protocol", "match_key", "target", "decision_version", "action"],
+  "properties": {
+    "decision_id": {"type": "string", "pattern": "^[0-7][0-9A-HJKMNP-TV-Z]{25}$"},
+    "case_id": {"type": "string", "pattern": "^[0-7][0-9A-HJKMNP-TV-Z]{25}$"},
+    "protocol": {"type": "string", "enum": ["HTTP", "SSH", "RDP"]},
+    "match_key": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512,
+      "description": "protocol + listener_id + source_ip + SNI_or_authenticated_principal, canonically joined."
+    },
+    "target": {"type": "string", "enum": ["ENDPOINT", "SANDBOX"]},
+    "decision_version": {"type": "integer", "minimum": 1},
+    "action": {"type": "string", "enum": ["CREATED", "SELECTED", "REVOKED", "EXPIRED", "FAILSAFE_DEFAULT"]}
+  }
+}

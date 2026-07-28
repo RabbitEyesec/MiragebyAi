@@ -1,0 +1,48 @@
+#!/usr/bin/env python3
+"""Runs mirage-outbox-relay (Step 6, §6.3) against the real dev stack.
+Ctrl-C to stop cleanly.
+"""
+from __future__ import annotations
+
+import asyncio
+import os
+import sys
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO_ROOT / "libs"))
+sys.path.insert(0, str(REPO_ROOT / "services" / "mirage-outbox-relay"))
+
+import psycopg  # noqa: E402
+from mirage_outbox_relay.relay import OutboxRelay  # noqa: E402
+
+from mirage_common.nats_client import connect  # noqa: E402
+
+
+def pg_dsn_from_env() -> str:
+    host = os.environ.get("MIRAGE_POSTGRES_HOST", "localhost")
+    port = os.environ.get("MIRAGE_POSTGRES_PORT", "5432")
+    user = os.environ.get("MIRAGE_POSTGRES_USER", "mirage_dev")
+    password = os.environ.get("MIRAGE_POSTGRES_PASSWORD", "mirage_dev_local_only")
+    db = os.environ.get("MIRAGE_POSTGRES_DB", "mirage")
+    return f"host={host} port={port} user={user} password={password} dbname={db}"
+
+
+async def main() -> int:
+    nats_url = os.environ.get("MIRAGE_NATS_URL", "nats://localhost:4222")
+    conn = await psycopg.AsyncConnection.connect(pg_dsn_from_env())
+    nc, js = await connect(nats_url)
+    relay = OutboxRelay(conn=conn, js=js)
+    print(f"mirage-outbox-relay: polling every {relay.batch_size} rows / 250ms against {nats_url} ...")
+    try:
+        await relay.run_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        await conn.close()
+        await nc.close()
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(asyncio.run(main()))

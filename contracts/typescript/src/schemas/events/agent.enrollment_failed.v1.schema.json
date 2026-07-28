@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mirage.internal/schemas/events/agent.enrollment_failed.v1.schema.json",
+  "title": "AgentEnrollmentFailedPayload",
+  "description": "Payload for event_type=agent.enrollment_failed, schema_version major=1. Audit trail requirement: enrolment failure.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["reason", "enrollment_token_id"],
+  "properties": {
+    "reason": {
+      "type": "string",
+      "enum": ["TOKEN_EXPIRED", "TOKEN_REUSED", "TOKEN_UNKNOWN", "BUILD_HASH_NOT_ALLOWLISTED", "HOST_FINGERPRINT_INVALID", "CSR_INVALID", "CA_SIGNING_ERROR"]
+    },
+    "enrollment_token_id": {
+      "oneOf": [
+        {"type": "string", "pattern": "^[0-7][0-9A-HJKMNP-TV-Z]{25}$"},
+        {"type": "null"}
+      ]
+    },
+    "presented_build_hash": {"type": ["string", "null"], "pattern": "^[a-f0-9]{64}$"},
+    "presented_host_fingerprint": {"type": ["string", "null"]}
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mirage.internal/schemas/events/system.health.v1.schema.json",
+  "title": "SystemHealthPayload",
+  "description": "Payload for event_type=system.health, schema_version major=1. Emitted by each control-plane unit and consumed by GET /api/v1/health (Step 4b).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["component", "status", "checked_at"],
+  "properties": {
+    "component": {
+      "type": "string",
+      "enum": [
+        "POSTGRES", "NATS", "ELASTICSEARCH", "KEYCLOAK", "STEP_CA",
+        "AGENT_INGESTION", "SANDBOX_GATEWAY", "OUTBOX_RELAY", "WORKER", "API"
+      ]
+    },
+    "status": {"type": "string", "enum": ["HEALTHY", "DEGRADED", "UNHEALTHY", "UNKNOWN"]},
+    "checked_at": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z$"
+    },
+    "detail": {"type": ["string", "null"], "maxLength": 1024},
+    "latency_ms": {"type": ["number", "null"], "minimum": 0}
+  }
+}

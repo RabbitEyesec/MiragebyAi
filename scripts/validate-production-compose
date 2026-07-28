@@ -1,0 +1,99 @@
+#!/usr/bin/env python3
+"""Refuses to let the production Compose stack start with a development-only
+setting still active. Run before `docker compose -f docker-compose.production.yml
+up`; the server installer's `deploy` step calls this automatically.
+
+This resolves the FULL merged config (env-var interpolation included) via
+`docker compose config`, not just the static YAML file — a literal
+`${VAR:?...}` in the file is meaningless if whoever deployed it actually
+exported a dev-shaped value for VAR. Checking the resolved config is what
+catches that.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+COMPOSE_FILE = REPO_ROOT / "infra" / "compose" / "docker-compose.production.yml"
+
+# Any of these substrings appearing in a resolved environment VALUE means a
+# development default leaked into a production deploy.
+FORBIDDEN_VALUE_SUBSTRINGS = (
+    "mirage_dev_local_only",
+    "mirage_dev_minio",
+    "LOCAL_DEV_NO_KMS",
+    "LOCAL_DEVELOPMENT",
+)
+
+FORBIDDEN_IMAGE_SUBSTRINGS = ("minio/minio", "minio/mc")
+
+
+def validate(compose_file: Path, env_file: Path | None) -> list[str]:
+    command = ["docker", "compose"]
+    if env_file is not None:
+        command += ["--env-file", str(env_file)]
+    command += ["-f", str(compose_file), "config", "--format", "json"]
+    result = subprocess.run(command, capture_output=True, text=True, cwd=REPO_ROOT, check=False)
+    if result.returncode != 0:
+        return [f"docker compose config failed (missing/invalid required variable?): {result.stderr.strip()}"]
+
+    config = json.loads(result.stdout)
+    problems: list[str] = []
+
+    for name, service in config.get("services", {}).items():
+        if "build" in service:
+            problems.append(
+                f"service {name!r} has a 'build:' key — production must deploy pinned "
+                "image digests from the release manifest, never build from source"
+            )
+        image = service.get("image", "")
+        if any(forbidden in image for forbidden in FORBIDDEN_IMAGE_SUBSTRINGS):
+            problems.append(f"service {name!r} uses a MinIO image ({image!r}) — not allowed in production")
+
+        command_value = service.get("command")
+        if command_value and "start-dev" in " ".join(str(part) for part in command_value):
+            problems.append(f"service {name!r} runs 'start-dev' — production Keycloak must run 'start --optimized'")
+
+        env = service.get("environment", {})
+        env_items = env.items() if isinstance(env, dict) else (item.split("=", 1) for item in env if "=" in item)
+        for key, value in env_items:
+            if key.startswith("DOCKER_STEPCA_INIT_"):
+                problems.append(
+                    f"service {name!r} sets {key} — production step-ca must never auto-initialize a throwaway CA"
+                )
+            if value is not None and any(forbidden in str(value) for forbidden in FORBIDDEN_VALUE_SUBSTRINGS):
+                problems.append(f"service {name!r} env {key} resolves to a development-only value")
+
+        for port_entry in service.get("ports", []):
+            host_ip = port_entry.get("host_ip") if isinstance(port_entry, dict) else None
+            if isinstance(port_entry, dict) and host_ip not in (None, "127.0.0.1", "::1"):
+                problems.append(
+                    f"service {name!r} publishes a port on {host_ip!r}, not loopback — "
+                    "production must not expose management ports directly"
+                )
+
+    return problems
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--compose-file", type=Path, default=COMPOSE_FILE)
+    parser.add_argument("--env-file", type=Path, default=REPO_ROOT / ".env")
+    args = parser.parse_args()
+
+    problems = validate(args.compose_file, args.env_file if args.env_file.is_file() else None)
+    if problems:
+        print("Production Compose validation FAILED:", file=sys.stderr)
+        for problem in problems:
+            print(f"  - {problem}", file=sys.stderr)
+        return 1
+    print("Production Compose validation passed: no development-only settings detected.")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

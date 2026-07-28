@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mirage.internal/schemas/events/agent.certificate_renewed.v1.schema.json",
+  "title": "AgentCertificateRenewedPayload",
+  "description": "Payload for event_type=agent.certificate_renewed, schema_version major=1. Audit trail requirement: renewal. Identity (agent_id) is preserved across renewal — old_certificate_serial and new_certificate_serial share the same agent_id.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["agent_id", "old_certificate_serial", "new_certificate_serial", "renewed_at_lifetime_fraction"],
+  "properties": {
+    "agent_id": {"type": "string", "minLength": 1, "maxLength": 256},
+    "old_certificate_serial": {"type": "string", "minLength": 1, "maxLength": 128},
+    "new_certificate_serial": {"type": "string", "minLength": 1, "maxLength": 128},
+    "renewed_at_lifetime_fraction": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "description": "Fraction of certificate lifetime remaining at renewal time; must be <= 0.20 per Step 3 auto-renew rule."
+    }
+  }
+}

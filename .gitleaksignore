@@ -1,0 +1,26 @@
+# Narrow, fingerprint-scoped gitleaks suppressions — never a wildcard/path-wide
+# ignore. See scripts/audit-public-repository and KNOWN_ISSUES.md for the audit
+# process this supports.
+#
+# This file is intentionally EMPTY of fingerprints.
+#
+# It previously carried one, pinned to a commit in this repository's earlier
+# history: tests/unit/test_config_schema.py's
+# test_cli_scan_secrets_detects_planted_secret writes a synthetic,
+# non-functional AWS-access-key-shaped string ("AKIA" followed by the
+# sequential alphabet — never a real or activatable key) # gitleaks:allow
+# to a scratch file, asserts the secret scanner detects it, then deletes the
+# file in a `finally` block. That fixture predated the `gitleaks:allow`
+# convention, and gitleaks scans each historical commit's own diff
+# independently, so a marker added in a later commit could not retroactively
+# clear the earlier one — hence a fingerprint.
+#
+# Every occurrence of that fixture, in code and in the documentation that
+# discusses it, now carries an inline `gitleaks:allow` marker on its own line
+# (inside an HTML comment in the markdown files, so it stays invisible when
+# rendered). This repository's history begins at the commit that introduced
+# those markers, so no historical commit remains to suppress.
+#
+# Prefer an inline marker at the source over a fingerprint here: a fingerprint
+# is opaque at the point where a reader actually meets the string, and it
+# silently stops matching as soon as the line moves.

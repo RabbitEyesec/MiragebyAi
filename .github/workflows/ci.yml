@@ -1,0 +1,278 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  dashboard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22.17.0"
+          cache: npm
+          cache-dependency-path: |
+            contracts/typescript/package-lock.json
+            dashboard/package-lock.json
+      - name: Build TypeScript contracts
+        working-directory: contracts/typescript
+        run: npm ci && npm run build
+      - name: Install dashboard dependencies
+        working-directory: dashboard
+        run: npm ci
+      - name: Audit dashboard production dependencies
+        working-directory: dashboard
+        run: npm audit --omit=dev --audit-level=high
+      - name: Dashboard lint, typecheck, unit, component, graph, and production build
+        run: make test-dashboard
+      - name: Explicit 2D graph suite
+        run: make test-graph-2d
+      - name: Explicit 3D graph suite
+        run: make test-graph-3d
+      - name: Explicit graph parity suite
+        run: make test-graph-parity
+      - name: Install pinned Playwright browser
+        working-directory: dashboard
+        run: npx playwright install --with-deps chromium
+      - name: Browser acceptance
+        run: make test-dashboard-e2e
+
+  release-package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install release tooling
+        run: |
+          python -m venv .venv
+          .venv/bin/python -m pip install --upgrade pip
+          .venv/bin/python -m pip install -e ".[dev]"
+      - name: Validate installer and release behavior
+        run: make test-installers
+      - name: Create ephemeral CI signing key
+        run: |
+          openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:3072 -out ci-release-key.pem
+          openssl pkey -in ci-release-key.pem -pubout -out ci-release-public.pem
+      - name: Build and independently verify signed source release
+        run: |
+          make build-release \
+            RELEASE_VERSION=0.1.0-ci \
+            RELEASE_OUTPUT=dist/mirage-0.1.0-ci.zip \
+            RELEASE_SIGNING_KEY=ci-release-key.pem
+          make verify-release \
+            RELEASE_OUTPUT=dist/mirage-0.1.0-ci.zip \
+            RELEASE_PUBLIC_KEY=ci-release-public.pem
+          # --trusted-public-key is the same EXTERNAL public half used by
+          # verify-release above. Clean-install validation re-verifies the
+          # package's signature, image digests and SBOM before trusting its
+          # inventory, and verify_release refuses a package's own embedded key
+          # as a trust anchor — so without an explicit anchor this fails closed
+          # rather than silently self-certifying.
+          .venv/bin/python scripts/test-clean-install validate \
+            --environment development \
+            --config config/development.example.yaml \
+            --package dist/mirage-0.1.0-ci.zip \
+            --trusted-public-key ci-release-public.pem \
+            --preflight-only
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mirage-signed-source-release
+          path: dist/mirage-0.1.0-ci.zip
+          if-no-files-found: error
+
+  dependency-vulnerability-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install project and audit tool
+        run: |
+          python -m venv .venv
+          .venv/bin/python -m pip install --upgrade pip
+          .venv/bin/python -m pip install -e ".[dev]"
+      - name: Audit installed Python dependencies
+        run: make scan-dependencies
+
+  # Offline-only checks — no Docker, no external services. Mirrors `make ci`
+  # exactly so a developer can reproduce a failure locally without needing
+  # to reconstruct CI's own steps by hand.
+  lint-typecheck-unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install Python dependencies
+        run: |
+          python -m venv .venv
+          .venv/bin/python -m pip install --upgrade pip
+          .venv/bin/python -m pip install -e ".[dev]"
+
+      - name: Install TypeScript dependencies
+        working-directory: contracts/typescript
+        run: npm ci
+
+      - name: Lint (ruff)
+        run: make lint
+
+      - name: Typecheck (mypy)
+        run: make typecheck
+
+      - name: Unit + contract tests (pytest)
+        run: make test
+
+      - name: Contract tests (TypeScript)
+        run: make test-contracts
+
+      # spec: "CI validates golden fixtures for current + previous
+      # versions" (§6.5-adjacent contracts requirement) — this is exactly
+      # what scripts/validate-contracts's drift + breaking-change checks do.
+      - name: Validate generated contracts match /schemas (no drift, no undeclared breaking change)
+        run: make validate-contracts
+
+      - name: Secret scan
+        run: make scan-secrets
+
+      - name: Reports, installers, failure, security, reduced load, OTel, teardown, and synthetic acceptance
+        run: make test-prompt3-local
+
+  # Static structural validation for infrastructure-as-code that cannot be
+  # exercised live in CI (no AWS account, no Windows host) — the exact same
+  # tests this repo already runs locally (ADR-0012, ADR-0021), just
+  # confirming they stay green on a clean CI checkout too.
+  terraform-and-packer-static-checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install Python dependencies
+        run: |
+          python -m venv .venv
+          .venv/bin/python -m pip install --upgrade pip
+          .venv/bin/python -m pip install -e ".[dev]"
+      - name: Terraform network-policy tests
+        run: .venv/bin/pytest tests/unit/test_terraform_network_policy.py -v
+      - name: Packer pipeline tests
+        run: .venv/bin/pytest tests/unit/test_packer_pipeline.py -v
+
+  # Real Postgres/NATS/Elasticsearch/Keycloak/step-ca via testcontainers —
+  # needs Docker, which GitHub's ubuntu-latest runners provide natively (no
+  # docker-in-docker setup required; testcontainers talks to the runner's
+  # own Docker daemon directly, exactly as it does on a developer's laptop).
+  integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install step CLI (smallstep) — required by the step-ca test fixtures
+        run: |
+          curl -sL https://github.com/smallstep/cli/releases/latest/download/step-cli_amd64.deb -o step-cli.deb
+          sudo dpkg -i step-cli.deb
+
+      - name: Install Python dependencies
+        run: |
+          python -m venv .venv
+          .venv/bin/python -m pip install --upgrade pip
+          .venv/bin/python -m pip install -e ".[dev]"
+
+      - name: Integration tests (real Postgres/NATS/Elasticsearch/Keycloak/step-ca)
+        run: make test-integration
+        timeout-minutes: 20
+
+  # Confirms every service actually builds AND boots against a real,
+  # freshly-provisioned stack — not just "the Dockerfile parses." Mirrors
+  # the exact verification performed locally for Task #17 (see
+  # TEST_RESULTS.md): each app container must reach a real HEALTHY status
+  # against real Postgres/NATS/Elasticsearch/Keycloak/step-ca containers.
+  docker-build-and-boot:
+    runs-on: ubuntu-latest
+    env:
+      MIRAGE_COMPOSE_FILE: infra/compose/docker-compose.development.yml
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build every service image
+        run: make docker-build
+
+      - name: Install step CLI (smallstep) — required by the step-ca bootstrap script
+        run: |
+          curl -sL https://github.com/smallstep/cli/releases/latest/download/step-cli_amd64.deb -o step-cli.deb
+          sudo dpkg -i step-cli.deb
+
+      - name: Prepare .env and bootstrap step-ca/Keycloak prerequisites
+        run: |
+          cp .env.example .env
+          cp config/development.example.yaml config/development.yaml
+          python3 -m venv .venv
+          .venv/bin/pip install --upgrade pip
+          .venv/bin/pip install -e ".[dev]"
+
+      # `make compose-up` depends on `compose-dirs`, which pre-creates every
+      # host directory the compose file bind-mounts. Without it the root-owned
+      # Docker daemon creates infra/step-ca/dev-provisioner-keys itself and the
+      # bootstrap step below cannot write into it (see Makefile: compose-dirs).
+      - name: Bring up the full compose stack
+        run: make compose-up
+
+      # Bootstrap talks to step-ca and Keycloak over the network, so gate it on
+      # those two actually being healthy rather than merely created. `up -d`
+      # honours depends_on, but this job must not depend on that subtlety.
+      - name: Wait for step-ca and Keycloak to be reachable
+        run: ./scripts/ci-wait-for-services step-ca keycloak
+
+      - name: Bootstrap step-ca provisioners + Keycloak realm
+        run: |
+          .venv/bin/python scripts/bootstrap-step-ca-provisioners
+          .venv/bin/python scripts/bootstrap-keycloak-realm
+
+      - name: Wait for every service to report healthy
+        run: ./scripts/ci-wait-for-services
+
+      - name: Dump stack diagnostics on failure
+        if: failure()
+        run: |
+          echo "::group::docker compose ps"
+          docker compose --env-file .env -f "$MIRAGE_COMPOSE_FILE" ps --all
+          echo "::endgroup::"
+          echo "::group::container inspect (non-running / unhealthy only)"
+          docker compose --env-file .env -f "$MIRAGE_COMPOSE_FILE" ps --all --quiet \
+            | while read -r cid; do
+                state=$(docker inspect -f '{{.State.Status}}/{{if .State.Health}}{{.State.Health.Status}}{{else}}-{{end}}' "$cid")
+                case "$state" in
+                  running/healthy|running/-|exited/-) continue ;;
+                esac
+                echo "--- $(docker inspect -f '{{.Name}}' "$cid") ($state) ---"
+                docker inspect -f '{{json .State}}' "$cid"
+              done
+          echo "::endgroup::"
+          echo "::group::service logs"
+          docker compose --env-file .env -f "$MIRAGE_COMPOSE_FILE" logs --no-color --timestamps
+          echo "::endgroup::"
+
+      - name: Tear down
+        if: always()
+        run: make compose-down

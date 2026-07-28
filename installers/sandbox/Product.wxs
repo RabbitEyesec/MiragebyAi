@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util"
+     xmlns:firewall="http://wixtoolset.org/schemas/v4/wxs/firewall">
+  <Package Name="Mirage Sandbox Bootstrap"
+           Manufacturer="Mirage"
+           Version="1.0.0"
+           UpgradeCode="B1C47169-9E6F-4E31-AF73-D8D11BEB5301"
+           Language="1033"
+           Scope="perMachine">
+    <SummaryInformation Keywords="Controlled Lab,Sandbox" Description="Hardened Mirage sandbox bootstrap" />
+    <MajorUpgrade DowngradeErrorMessage="A newer Mirage sandbox package is installed." />
+    <MediaTemplate EmbedCab="yes" />
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="MIRAGE" Name="Mirage">
+        <Directory Id="INSTALLFOLDER" Name="Sandbox" />
+      </Directory>
+    </StandardDirectory>
+    <StandardDirectory Id="CommonAppDataFolder">
+      <Directory Id="MIRAGEDATA" Name="Mirage">
+        <Directory Id="DATAFOLDER" Name="Sandbox" />
+      </Directory>
+    </StandardDirectory>
+    <Feature Id="SandboxFeature" Title="Mirage Sandbox" Level="1">
+      <ComponentRef Id="BootstrapComponent" />
+      <ComponentRef Id="DataComponent" />
+      <ComponentRef Id="EgressComponent" />
+    </Feature>
+    <Component Id="BootstrapComponent" Directory="INSTALLFOLDER" Guid="1E37B9DD-9E17-4D37-AAC6-B3E245D1C401">
+      <File Id="BootstrapScript" Source="bootstrap.ps1" Name="bootstrap.ps1" KeyPath="yes" />
+      <ServiceInstall Id="ControllerService"
+                      Name="MirageEnvironmentController"
+                      DisplayName="Mirage Environment Controller"
+                      Description="Policy-constrained Mirage sandbox controller"
+                      Type="ownProcess"
+                      Start="auto"
+                      ErrorControl="normal"
+                      Account="NT SERVICE\MirageController"
+                      Arguments="-NoProfile -ExecutionPolicy AllSigned -File &quot;[INSTALLFOLDER]bootstrap.ps1&quot; startup">
+        <util:ServiceConfig FirstFailureActionType="restart"
+                            SecondFailureActionType="restart"
+                            ThirdFailureActionType="none"
+                            RestartServiceDelayInSeconds="10"
+                            ResetPeriodInDays="1" />
+      </ServiceInstall>
+      <ServiceControl Id="ControllerControl" Name="MirageEnvironmentController"
+                      Start="install" Stop="both" Remove="uninstall" Wait="yes" />
+    </Component>
+    <Component Id="DataComponent" Directory="DATAFOLDER" Guid="86015938-EA4E-4202-BCA7-9FBB4C78F402">
+      <CreateFolder />
+      <util:PermissionEx User="NT SERVICE\MirageController"
+                         GenericRead="yes" GenericWrite="yes" />
+      <RegistryKey Root="HKLM" Key="SOFTWARE\Mirage\Sandbox">
+        <RegistryValue Name="Ready" Type="integer" Value="0" KeyPath="yes" />
+      </RegistryKey>
+    </Component>
+    <Component Id="EgressComponent" Directory="INSTALLFOLDER" Guid="F1986A88-A6A8-4097-80AD-BDD42BC4A403">
+      <File Id="EgressMarker" Source="egress.marker" Name="egress.marker" KeyPath="yes" />
+      <firewall:FirewallException Id="ControllerWss"
+                                  Name="Mirage Sandbox Controller outbound WSS"
+                                  Direction="out" Protocol="tcp" Port="443"
+                                  Profile="all" Scope="any" />
+    </Component>
+  </Package>
+</Wix>

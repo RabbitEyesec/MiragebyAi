@@ -1,0 +1,122 @@
+#!/usr/bin/env python3
+"""Full, non-fatal diagnostic report: tools, versions, ports, and which
+external (AWS/Windows) dependencies are missing in this environment. Always
+exits 0 — it is a report, not a gate. Use scripts/check-prerequisites as the
+gate.
+"""
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _lib import (  # noqa: E402
+    REPO_ROOT,
+    Result,
+    dim,
+    port_status,
+    print_header,
+    print_table,
+    run,
+    tool_version,
+    which,
+)
+
+DEV_PORTS = {
+    5432: "PostgreSQL",
+    4222: "NATS client",
+    8222: "NATS monitoring",
+    9200: "Elasticsearch",
+    8081: "Keycloak",
+    9000: "step-ca",
+    8080: "Nginx (HTTP broker, dev)",
+    8090: "canary collector (dev stand-in)",
+    8000: "mirage-api (dev)",
+}
+
+
+def required_tools() -> list[Result]:
+    return [
+        tool_version("python3"),
+        tool_version("git"),
+        tool_version("docker"),
+        tool_version("node"),
+        tool_version("npm"),
+        tool_version("make"),
+    ]
+
+
+def optional_lab_tools() -> list[Result]:
+    out = []
+    for tool, flag in [
+        ("terraform", "version"),
+        ("packer", "version"),
+        ("tfsec", "--version"),
+        ("aws", "--version"),
+        ("nats", "--version"),
+        ("ssh", "-V"),
+    ]:
+        r = tool_version(tool, flag)
+        r.required = False
+        out.append(r)
+    wix = which("wix") or which("candle")
+    out.append(
+        Result("WiX toolset", wix is not None, "found" if wix else "not found (Windows-only; lab)", required=False)
+    )
+    return out
+
+
+def aws_credentials() -> Result:
+    code, out = run(["aws", "sts", "get-caller-identity"], timeout=5)
+    if which("aws") is None:
+        return Result("AWS credentials", False, "aws CLI not installed", required=False)
+    if code == 0:
+        return Result("AWS credentials", True, "configured: " + out.replace("\n", " ")[:120], required=False)
+    return Result("AWS credentials", False, "not configured — expected in this environment; AWS steps are LAB_VERIFICATION_REQUIRED", required=False)
+
+
+def port_report() -> list[Result]:
+    results = []
+    for port, name in DEV_PORTS.items():
+        listening = port_status("127.0.0.1", port)
+        results.append(Result(f":{port} {name}", listening, "listening" if listening else "not listening (ok if stack not started)", required=False))
+    return results
+
+
+def config_files() -> list[Result]:
+    results = []
+    for name, example in [
+        (".env", ".env.example"),
+        ("config/development.yaml", "config/development.example.yaml"),
+    ]:
+        p = REPO_ROOT / name
+        results.append(Result(name, p.exists(), "present" if p.exists() else f"missing — run: cp {example} {name}", required=False))
+    return results
+
+
+def main() -> int:
+    print_header("Mirage doctor — environment report")
+
+    print_header("Required tools")
+    print_table(required_tools())
+
+    print_header("Optional / lab-only tools")
+    print_table(optional_lab_tools())
+
+    print_header("AWS")
+    print_table([aws_credentials()])
+
+    print_header("Local config files")
+    print_table(config_files())
+
+    print_header("Development ports (informational — dev stack may not be up)")
+    print_table(port_report())
+
+    print()
+    print(dim("This report never fails the build. Missing lab-only tools are expected"))
+    print(dim("on a workstation without AWS/Windows access — see EXTERNAL_DEPENDENCIES.md."))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

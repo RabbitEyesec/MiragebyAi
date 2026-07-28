@@ -1,0 +1,142 @@
+#!/usr/bin/env python3
+"""Lightweight forward/rollback SQL migration runner (Step 6 will expand the
+schema considerably; this runner itself doesn't change).
+
+Migrations live in infra/migrations/NNNN_description.{up,down}.sql, applied
+in numeric order. Applied migrations are tracked in a `schema_migrations`
+table (created automatically). `down` rolls back exactly the most recently
+applied migration.
+
+Usage:
+    scripts/migrate up               # apply all pending migrations
+    scripts/migrate down             # roll back the most recent migration
+    scripts/migrate status           # list applied / pending migrations
+"""
+from __future__ import annotations
+
+import os
+import re
+import sys
+from pathlib import Path
+
+import psycopg
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+MIGRATIONS_DIR = REPO_ROOT / "infra" / "migrations"
+
+FILENAME_RE = re.compile(r"^(?P<version>\d{4})_(?P<name>[a-z0-9_]+)\.(?P<direction>up|down)\.sql$")
+
+
+def dsn_from_env() -> str:
+    host = os.environ.get("MIRAGE_POSTGRES_HOST", "localhost")
+    port = os.environ.get("MIRAGE_POSTGRES_PORT", "5432")
+    user = os.environ.get("MIRAGE_POSTGRES_USER", "mirage_dev")
+    password = os.environ.get("MIRAGE_POSTGRES_PASSWORD", "mirage_dev_local_only")
+    db = os.environ.get("MIRAGE_POSTGRES_DB", "mirage")
+    return f"host={host} port={port} user={user} password={password} dbname={db}"
+
+
+def discover_migrations() -> list[tuple[str, str, Path, Path]]:
+    """Returns [(version, name, up_path, down_path), ...] sorted by version."""
+    up_paths: dict[str, Path] = {}
+    down_paths: dict[str, Path] = {}
+    names: dict[str, str] = {}
+    for f in MIGRATIONS_DIR.glob("*.sql"):
+        m = FILENAME_RE.match(f.name)
+        if not m:
+            continue
+        version = m.group("version")
+        names[version] = m.group("name")
+        if m.group("direction") == "up":
+            up_paths[version] = f
+        else:
+            down_paths[version] = f
+
+    result = []
+    for version in sorted(names):
+        assert version in up_paths, f"migration {version} missing .up.sql"
+        assert version in down_paths, f"migration {version} missing .down.sql"
+        result.append((version, names[version], up_paths[version], down_paths[version]))
+    return result
+
+
+def ensure_tracking_table(conn: psycopg.Connection) -> None:
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS schema_migrations (
+                version TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
+            )
+            """
+        )
+    conn.commit()
+
+
+def applied_versions(conn: psycopg.Connection) -> list[str]:
+    with conn.cursor() as cur:
+        cur.execute("SELECT version FROM schema_migrations ORDER BY version")
+        return [row[0] for row in cur.fetchall()]
+
+
+def cmd_up() -> int:
+    with psycopg.connect(dsn_from_env()) as conn:
+        ensure_tracking_table(conn)
+        applied = set(applied_versions(conn))
+        pending = [m for m in discover_migrations() if m[0] not in applied]
+        if not pending:
+            print("No pending migrations.")
+            return 0
+        for version, name, up_path, _down_path in pending:
+            print(f"Applying {version}_{name} ...")
+            sql = up_path.read_text()
+            with conn.cursor() as cur:
+                cur.execute(sql)
+                cur.execute(
+                    "INSERT INTO schema_migrations (version, name) VALUES (%s, %s)", (version, name)
+                )
+            conn.commit()
+            print(f"  applied {version}_{name}")
+    return 0
+
+
+def cmd_down() -> int:
+    with psycopg.connect(dsn_from_env()) as conn:
+        ensure_tracking_table(conn)
+        applied = applied_versions(conn)
+        if not applied:
+            print("No migrations to roll back.")
+            return 0
+        last_version = applied[-1]
+        migrations = {m[0]: m for m in discover_migrations()}
+        version, name, _up_path, down_path = migrations[last_version]
+        print(f"Rolling back {version}_{name} ...")
+        sql = down_path.read_text()
+        with conn.cursor() as cur:
+            cur.execute(sql)
+            cur.execute("DELETE FROM schema_migrations WHERE version = %s", (version,))
+        conn.commit()
+        print(f"  rolled back {version}_{name}")
+    return 0
+
+
+def cmd_status() -> int:
+    with psycopg.connect(dsn_from_env()) as conn:
+        ensure_tracking_table(conn)
+        applied = set(applied_versions(conn))
+    for version, name, _up, _down in discover_migrations():
+        state = "APPLIED" if version in applied else "PENDING"
+        print(f"{version}_{name}: {state}")
+    return 0
+
+
+def main() -> int:
+    if len(sys.argv) != 2 or sys.argv[1] not in ("up", "down", "status"):
+        print(__doc__)
+        return 2
+    return {"up": cmd_up, "down": cmd_down, "status": cmd_status}[sys.argv[1]]()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

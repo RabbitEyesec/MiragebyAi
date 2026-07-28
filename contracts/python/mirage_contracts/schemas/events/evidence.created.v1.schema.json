@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mirage.local/schemas/events/evidence.created.v1.schema.json",
+  "title": "EvidenceCreatedV1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["evidence_id", "case_id", "evidence_type", "sha256", "size_bytes", "s3_key", "s3_version_id", "verification_status"],
+  "properties": {
+    "evidence_id": {"type": "string", "pattern": "^[0-7][0-9A-HJKMNP-TV-Z]{25}$"},
+    "case_id": {"type": "string", "pattern": "^[0-7][0-9A-HJKMNP-TV-Z]{25}$"},
+    "evidence_type": {"type": "string", "minLength": 1, "maxLength": 64},
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "size_bytes": {"type": "integer", "minimum": 0},
+    "s3_key": {"type": "string", "minLength": 1, "maxLength": 1024},
+    "s3_version_id": {"type": "string", "minLength": 1, "maxLength": 1024},
+    "verification_status": {"const": "PENDING"}
+  }
+}

@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mirage.internal/schemas/events/fingerprint.gate_evaluated.v1.schema.json",
+  "title": "FingerprintGateEvaluatedPayload",
+  "description": "Payload for event_type=fingerprint.gate_evaluated, schema_version major=1. Step 10's live, blocking §6.5 fingerprint gate — evaluated every time a case attempts SANDBOX_ACTIVE -> ENGAGING. Emitted on BOTH pass and block (§6.5: 'an inconsistent sandbox is worse than none' — the failure itself must be durably recorded, not silently swallowed). Carried in the shared envelope (Appendix C).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["case_id", "sandbox_id", "baseline_version", "passed", "all_must_passed", "should_pass_ratio", "failed_must_checks", "blocked"],
+  "properties": {
+    "case_id": {
+      "type": "string",
+      "pattern": "^[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+    },
+    "sandbox_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "baseline_version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+    },
+    "passed": {
+      "type": "boolean",
+      "description": "§6.5 scoring rule result: MUST=100% AND SHOULD>=75%."
+    },
+    "all_must_passed": {"type": "boolean"},
+    "should_pass_ratio": {"type": "number", "minimum": 0, "maximum": 1},
+    "failed_must_checks": {
+      "type": "array",
+      "items": {"type": "string"},
+      "description": "Names of every MUST-level check that failed (empty when all_must_passed is true) — the evidence a human reviewing why a case got stuck in SANDBOX_ACTIVE needs without re-running the comparator."
+    },
+    "blocked": {
+      "type": "boolean",
+      "description": "True when this evaluation prevented the SANDBOX_ACTIVE -> ENGAGING transition from happening at all."
+    }
+  }
+}

@@ -1,0 +1,53 @@
+#!/usr/bin/env python3
+"""Wait until exact-case outbox/actions/report work has durably drained."""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import time
+
+import psycopg
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--case-id", required=True)
+    parser.add_argument("--timeout-seconds", type=int, default=300)
+    parser.add_argument("--poll-seconds", type=float, default=0.5)
+    args = parser.parse_args()
+    dsn = os.environ.get("MIRAGE_POSTGRES_DSN")
+    if not dsn:
+        parser.error("MIRAGE_POSTGRES_DSN must be supplied through the environment")
+    deadline = time.monotonic() + max(1, min(args.timeout_seconds, 1800))
+    last: dict[str, int] = {}
+    while time.monotonic() < deadline:
+        with psycopg.connect(dsn) as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT
+                  (SELECT count(*) FROM outbox_events
+                   WHERE published_at IS NULL AND payload->>'case_id'=%s),
+                  (SELECT count(*) FROM sandbox_actions
+                   WHERE case_id=%s AND status='PENDING'),
+                  (SELECT count(*) FROM case_reports
+                   WHERE case_id=%s AND status IN
+                     ('QUEUED','WAITING_FOR_EXPORT','GENERATING','VERIFYING',
+                      'CANCEL_REQUESTED'))
+                """,
+                (args.case_id, args.case_id, args.case_id),
+            )
+            row = cur.fetchone()
+            if row is None:
+                raise RuntimeError("queue-drain query returned no row")
+            last = dict(zip(("outbox", "sandbox_actions", "reports"), row, strict=True))
+        if not any(last.values()):
+            print(json.dumps({"case_id": args.case_id, "result": "PASS", "pending": last}, indent=2))
+            return 0
+        time.sleep(max(0.1, min(args.poll_seconds, 5)))
+    print(json.dumps({"case_id": args.case_id, "result": "BLOCKED", "pending": last}, indent=2))
+    return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

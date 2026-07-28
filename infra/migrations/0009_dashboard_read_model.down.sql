@@ -1,0 +1,11 @@
+DROP TABLE IF EXISTS dashboard_realtime_updates;
+DROP TABLE IF EXISTS dashboard_case_access;
+DROP TABLE IF EXISTS dashboard_user_preferences;
+DROP TABLE IF EXISTS dashboard_saved_views;
+DROP TABLE IF EXISTS dashboard_notifications;
+DROP TABLE IF EXISTS dashboard_projected_events;
+DROP TABLE IF EXISTS dashboard_projection_offsets;
+DROP TABLE IF EXISTS dashboard_graph_edges;
+DROP TABLE IF EXISTS dashboard_graph_nodes;
+DROP TABLE IF EXISTS dashboard_timeline_items;
+DROP TABLE IF EXISTS dashboard_case_summary;

@@ -1,0 +1,18 @@
+{
+  "schema_version": "mirage.rbac-matrix/1.0",
+  "default": "DENY",
+  "endpoints": [
+    {"method": "GET", "path": "/api/v1/dashboard/cases", "roles": ["platform_admin", "investigator", "operator", "auditor", "read_only"], "object_check": "owner, explicit dashboard_case_access, or global role"},
+    {"method": "GET", "path": "/api/v1/dashboard/cases/{case_id}", "roles": ["platform_admin", "investigator", "operator", "auditor", "read_only"], "object_check": "case access; denial is 404"},
+    {"method": "GET", "path": "/api/v1/dashboard/stream", "roles": ["platform_admin", "investigator", "operator", "auditor", "read_only"], "object_check": "case access plus minimum_role per update"},
+    {"method": "POST", "path": "/api/v1/dashboard/cases/{case_id}/rebuild", "roles": ["platform_admin", "investigator", "operator"], "object_check": "OPERATE case access"},
+    {"method": "POST", "path": "/api/v1/cases/{case_id}/directive", "roles": ["platform_admin", "investigator"], "object_check": "case-bound write and audit"},
+    {"method": "POST", "path": "/api/v1/cases/{case_id}/messages", "roles": ["platform_admin", "direct_intervention"], "object_check": "case/session binding, preview hash, policy decision"},
+    {"method": "POST", "path": "/api/v1/cases/{case_id}/reports", "roles": ["platform_admin", "export"], "object_check": "case access, evidence eligibility, idempotency"},
+    {"method": "POST", "path": "/api/v1/cases/{case_id}/reports/{report_id}/verify", "roles": ["platform_admin", "export"], "object_check": "case/report binding"},
+    {"method": "GET", "path": "/api/v1/cases/{case_id}/reports/{report_id}/download", "roles": ["platform_admin", "export"], "object_check": "case/report binding plus expiring single-use token"},
+    {"method": "POST", "path": "/api/v1/cases/{case_id}/artifacts/{artifact_id}/deploy", "roles": ["platform_admin", "investigator"], "object_check": "case/artifact binding, clean scan, policy allow"},
+    {"method": "POST", "path": "/api/v1/cases/{case_id}/export", "roles": ["platform_admin", "export"], "object_check": "case/evidence eligibility"},
+    {"method": "POST", "path": "/api/v1/channels/emergency-disable", "roles": ["platform_admin", "emergency_control"], "object_check": "audited global control"}
+  ]
+}

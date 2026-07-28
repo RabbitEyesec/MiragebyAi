@@ -1,0 +1,4 @@
+#!/usr/bin/env python3
+from mirage_common.server_installer import cli
+
+raise SystemExit(cli("upgrade"))

@@ -1,0 +1,5 @@
+#!/usr/bin/env python3
+"""Environment teardown is intentionally delegated to exact per-case plans."""
+from mirage_common.teardown import local_cli
+
+raise SystemExit(local_cli())

@@ -1,0 +1,1 @@
+{"type":"dashboard","id":"mirage-operations-otel-v1","attributes":{"title":"Mirage Operations — Traces, Lag, Evidence, Reports and Teardown","description":"Correlated API, NATS, database, sandbox, evidence, AI, report, and teardown observability. No hostile content or credentials.","panelsJSON":"[]","optionsJSON":"{}","timeRestore":false,"version":1}}

@@ -1,0 +1,342 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mirage.internal/schemas/config.schema.json",
+  "title": "Mirage Platform Configuration",
+  "description": "Schema for config/{development,acceptance,production}.yaml. Values are configuration ownership pointers (host names, ARNs, secret references) — never secret material. Actual credentials are resolved at process startup from AWS Secrets Manager (acceptance/production) or local environment variables (development). See docs/runbooks/bootstrap.md and docs/runbooks/secrets.md.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "environment",
+    "logging",
+    "observability",
+    "aws",
+    "network",
+    "domains",
+    "postgres",
+    "nats",
+    "elasticsearch",
+    "keycloak",
+    "step_ca",
+    "ai_provider",
+    "kms",
+    "evidence",
+    "artifact_scanner",
+    "fleet",
+    "installer_signing",
+    "canary"
+  ],
+  "properties": {
+    "environment": {
+      "type": "string",
+      "enum": ["development", "acceptance", "production"],
+      "description": "Environment name. Drives which mandatory fields are enforced below and is applied as the Environment=<environment> resource tag."
+    },
+    "logging": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["level"],
+      "properties": {
+        "level": {
+          "type": "string",
+          "enum": ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
+        },
+        "redact_secrets": {
+          "type": "boolean",
+          "default": true,
+          "description": "Must remain true outside development. Secret values and raw intruder content are never logged (see EXTERNAL_DEPENDENCIES.md / security boundary)."
+        }
+      }
+    },
+    "observability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["otel_endpoint", "otel_service_namespace"],
+      "properties": {
+        "otel_endpoint": {
+          "type": "string",
+          "format": "uri",
+          "description": "OpenTelemetry OTLP collector endpoint."
+        },
+        "otel_service_namespace": {
+          "type": "string",
+          "const_hint": "mirage"
+        }
+      }
+    },
+    "aws": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["account_id", "region"],
+      "properties": {
+        "account_id": {
+          "type": "string",
+          "pattern": "^([0-9]{12}|REPLACE_ME_AWS_ACCOUNT_ID)$",
+          "description": "12-digit AWS account ID. Placeholder REPLACE_ME_AWS_ACCOUNT_ID is only valid in the checked-in example files, never in a real config."
+        },
+        "region": {"type": "string", "pattern": "^[a-z]{2}-[a-z]+-[0-9]$"}
+      }
+    },
+    "network": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["vpc_cidr", "subnets"],
+      "properties": {
+        "vpc_cidr": {
+          "type": "string",
+          "pattern": "^([0-9]{1,3}\\.){3}[0-9]{1,3}/[0-9]{1,2}$"
+        },
+        "subnets": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["public_edge", "control", "endpoint", "sandbox", "attacker"],
+          "properties": {
+            "public_edge": {"type": "string", "pattern": "^([0-9]{1,3}\\.){3}[0-9]{1,3}/[0-9]{1,2}$"},
+            "control": {"type": "string", "pattern": "^([0-9]{1,3}\\.){3}[0-9]{1,3}/[0-9]{1,2}$"},
+            "endpoint": {"type": "string", "pattern": "^([0-9]{1,3}\\.){3}[0-9]{1,3}/[0-9]{1,2}$"},
+            "sandbox": {"type": "string", "pattern": "^([0-9]{1,3}\\.){3}[0-9]{1,3}/[0-9]{1,2}$"},
+            "attacker": {"type": "string", "pattern": "^([0-9]{1,3}\\.){3}[0-9]{1,3}/[0-9]{1,2}$"}
+          }
+        }
+      }
+    },
+    "domains": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["primary_domain", "canary_callback_domain", "tls_certificate_ref"],
+      "properties": {
+        "primary_domain": {"type": "string"},
+        "canary_callback_domain": {
+          "type": "string",
+          "description": "MUST differ from primary_domain (canary collector is serverless/off-VPC, Appendix D)."
+        },
+        "tls_certificate_ref": {
+          "type": "string",
+          "description": "ACM certificate ARN or reference; never a raw cert/key."
+        }
+      }
+    },
+    "postgres": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["host", "port", "database", "credentials_source"],
+      "properties": {
+        "host": {"type": "string"},
+        "port": {"type": "integer", "default": 5432},
+        "database": {"type": "string"},
+        "credentials_source": {"type": "string", "enum": ["env", "secrets_manager"]},
+        "secret_name": {"type": "string", "description": "Required when credentials_source=secrets_manager. Matches mirage/<environment>/postgres."}
+      }
+    },
+    "nats": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["url", "credentials_source"],
+      "properties": {
+        "url": {"type": "string"},
+        "credentials_source": {"type": "string", "enum": ["env", "secrets_manager"]},
+        "secret_name": {"type": "string"}
+      }
+    },
+    "elasticsearch": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["url", "credentials_source"],
+      "properties": {
+        "url": {"type": "string"},
+        "credentials_source": {"type": "string", "enum": ["env", "secrets_manager"]},
+        "secret_name": {"type": "string"}
+      }
+    },
+    "keycloak": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["issuer_url", "realm", "client_id", "bootstrap_admin_source"],
+      "properties": {
+        "issuer_url": {"type": "string", "format": "uri"},
+        "realm": {"type": "string", "default": "mirage"},
+        "client_id": {"type": "string"},
+        "bootstrap_admin_source": {"type": "string", "enum": ["env", "secrets_manager"]},
+        "secret_name": {"type": "string"}
+      }
+    },
+    "step_ca": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["url", "root_fingerprint_source"],
+      "properties": {
+        "url": {"type": "string", "format": "uri"},
+        "provisioner_name": {"type": "string", "default": "mirage-enrollment"},
+        "root_fingerprint_source": {"type": "string", "enum": ["env", "secrets_manager"]},
+        "secret_name": {"type": "string"}
+      }
+    },
+    "ai_provider": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "secret_name",
+        "timeout_seconds",
+        "max_concurrent_requests",
+        "max_input_tokens",
+        "max_output_tokens",
+        "daily_budget_gbp",
+        "monthly_budget_gbp",
+        "max_retries",
+        "retry_base_seconds",
+        "circuit_breaker_failures",
+        "circuit_breaker_reset_seconds",
+        "usage_alert_percent",
+        "allow_external_provider",
+        "model_allowlist",
+        "max_requests_per_case"
+      ],
+      "properties": {
+        "secret_name": {
+          "type": "string",
+          "description": "Secrets Manager name holding {provider, api_key, model, base_url}. Never a literal key here."
+        },
+        "timeout_seconds": {"type": "number", "exclusiveMinimum": 0, "maximum": 10},
+        "max_concurrent_requests": {"type": "integer", "minimum": 1, "maximum": 100},
+        "max_input_tokens": {"type": "integer", "minimum": 1, "maximum": 4000},
+        "max_output_tokens": {"type": "integer", "minimum": 1, "maximum": 4000},
+        "daily_budget_gbp": {"type": "number", "minimum": 0},
+        "monthly_budget_gbp": {"type": "number", "minimum": 0},
+        "max_retries": {"type": "integer", "minimum": 0, "maximum": 5},
+        "retry_base_seconds": {"type": "number", "minimum": 0, "maximum": 10},
+        "circuit_breaker_failures": {"type": "integer", "minimum": 1},
+        "circuit_breaker_reset_seconds": {"type": "integer", "minimum": 1},
+        "usage_alert_percent": {"type": "integer", "minimum": 1, "maximum": 100},
+        "allow_external_provider": {"type": "boolean"},
+        "model_allowlist": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1},
+          "uniqueItems": true
+        },
+        "max_requests_per_case": {"type": "integer", "minimum": 1}
+      }
+    },
+    "kms": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["signing_key_ref"],
+      "properties": {
+        "signing_key_ref": {"type": "string", "description": "KMS key ARN or alias for evidence/manifest signing (RSASSA_PSS_SHA_256)."}
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "bucket_name",
+        "region",
+        "object_lock_mode",
+        "retention_days",
+        "multipart_threshold_mb",
+        "max_retries",
+        "request_timeout_seconds"
+      ],
+      "properties": {
+        "bucket_name": {"type": "string"},
+        "region": {"type": "string"},
+        "object_lock_mode": {"enum": ["GOVERNANCE", "COMPLIANCE"]},
+        "retention_days": {"type": "integer", "minimum": 1},
+        "multipart_threshold_mb": {"type": "integer", "minimum": 5},
+        "max_retries": {"type": "integer", "minimum": 0, "maximum": 10},
+        "request_timeout_seconds": {"type": "integer", "minimum": 1, "maximum": 300},
+        "endpoint_url": {
+          "type": "string",
+          "format": "uri",
+          "description": "Development-only S3-compatible endpoint. Omit for AWS."
+        },
+        "rfc3161_authority_url": {"type": "string", "format": "uri"},
+        "rfc3161_ca_file": {"type": "string"}
+      }
+    },
+    "artifact_scanner": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "max_upload_mb",
+        "max_archive_depth",
+        "max_archive_members",
+        "max_expanded_mb",
+        "max_compression_ratio",
+        "per_member_max_mb",
+        "scan_timeout_seconds",
+        "clamav_timeout_seconds",
+        "yara_timeout_seconds",
+        "oletools_timeout_seconds",
+        "yara_rules_path"
+      ],
+      "properties": {
+        "max_upload_mb": {"type": "integer", "const": 250},
+        "max_archive_depth": {"type": "integer", "minimum": 1, "maximum": 10},
+        "max_archive_members": {"type": "integer", "minimum": 1},
+        "max_expanded_mb": {"type": "integer", "minimum": 1},
+        "max_compression_ratio": {"type": "number", "minimum": 1},
+        "per_member_max_mb": {"type": "integer", "minimum": 1, "maximum": 250},
+        "scan_timeout_seconds": {"type": "integer", "minimum": 1},
+        "clamav_timeout_seconds": {"type": "integer", "minimum": 1},
+        "yara_timeout_seconds": {"type": "integer", "minimum": 1},
+        "oletools_timeout_seconds": {"type": "integer", "minimum": 1},
+        "yara_rules_path": {"type": "string"}
+      }
+    },
+    "fleet": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["fleet_server_url", "enrollment_token_source"],
+      "properties": {
+        "fleet_server_url": {"type": "string"},
+        "enrollment_token_source": {"type": "string", "enum": ["env", "secrets_manager"]},
+        "secret_name": {"type": "string"}
+      }
+    },
+    "installer_signing": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["certificate_ref"],
+      "properties": {
+        "certificate_ref": {"type": "string", "description": "Code-signing certificate reference for WiX MSI signing. Never present inside a built MSI or container image."}
+      }
+    },
+    "canary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["callback_base_url", "signing_secret_name", "rate_limit_per_five_minutes"],
+      "properties": {
+        "callback_base_url": {"type": "string", "format": "uri"},
+        "signing_secret_name": {
+          "type": "string",
+          "description": "Secrets Manager name holding the collector/ingestion HMAC key."
+        },
+        "rate_limit_per_five_minutes": {"type": "integer", "minimum": 100}
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"environment": {"const": "development"}}, "required": ["environment"]},
+      "then": {
+        "description": "Development may use env-sourced local credentials for everything so `docker compose up` works without AWS."
+      }
+    },
+    {
+      "if": {
+        "properties": {"environment": {"enum": ["acceptance", "production"]}},
+        "required": ["environment"]
+      },
+      "then": {
+        "description": "Outside development, all credentials MUST come from Secrets Manager, never raw env values.",
+        "properties": {
+          "postgres": {"properties": {"credentials_source": {"const": "secrets_manager"}}},
+          "nats": {"properties": {"credentials_source": {"const": "secrets_manager"}}},
+          "elasticsearch": {"properties": {"credentials_source": {"const": "secrets_manager"}}},
+          "keycloak": {"properties": {"bootstrap_admin_source": {"const": "secrets_manager"}}},
+          "step_ca": {"properties": {"root_fingerprint_source": {"const": "secrets_manager"}}},
+          "fleet": {"properties": {"enrollment_token_source": {"const": "secrets_manager"}}}
+        }
+      }
+    }
+  ]
+}

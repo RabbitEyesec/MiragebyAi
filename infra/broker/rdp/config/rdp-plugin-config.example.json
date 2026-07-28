@@ -1,0 +1,12 @@
+{
+  "mirage_api_url": "https://mirage-api.internal:8000",
+  "gateway_listener_id": "rdgw-1",
+  "client_cert_path": "C:\\ProgramData\\Mirage\\certs\\rdp-broker-client.crt",
+  "client_key_path": "C:\\ProgramData\\Mirage\\certs\\rdp-broker-client.key",
+  "root_ca_path": "C:\\ProgramData\\Mirage\\certs\\step-ca-root.crt",
+  "client_cert_serial": "REPLACE_ME_CERTIFICATE_SERIAL",
+  "proxy_shared_secret_env_var": "MIRAGE_RDP_PROXY_SHARED_SECRET",
+  "timeout_ms": 2000,
+  "fail_safe_target": "ENDPOINT",
+  "event_log_source": "MirageRdpPlugin"
+}

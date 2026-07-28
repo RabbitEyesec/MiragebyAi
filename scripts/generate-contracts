@@ -1,0 +1,152 @@
+#!/usr/bin/env python3
+"""Generate everything downstream of /schemas (the source of truth):
+
+1. Bundle raw schema JSON into mirage_contracts/schemas/ and
+   contracts/typescript/src/schemas/ (so both packages are self-contained —
+   no reliance on a repo-root path at runtime).
+2. Generate Pydantic v2 models (contracts/python/mirage_contracts/generated/)
+   via datamodel-code-generator.
+3. Generate TypeScript types (contracts/typescript/src/generated/) via
+   json-schema-to-typescript (invoked through contracts/typescript/scripts/generate-types.mjs).
+
+`make validate-contracts` re-runs this into a temp directory and diffs
+against what's committed — CI fails if generated output has drifted from
+/schemas, i.e. someone hand-edited generated code or forgot to regenerate.
+"""
+from __future__ import annotations
+
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+SCHEMAS_SRC = REPO_ROOT / "schemas"
+PY_PKG = REPO_ROOT / "contracts" / "python" / "mirage_contracts"
+TS_PKG = REPO_ROOT / "contracts" / "typescript"
+
+
+def bundle_schemas(dest_root: Path) -> None:
+    dest = dest_root
+    if dest.exists():
+        shutil.rmtree(dest)
+    shutil.copytree(SCHEMAS_SRC, dest)
+
+
+def generate_python_models(py_pkg_root: Path) -> None:
+    generated_dir = py_pkg_root / "generated"
+    if generated_dir.exists():
+        shutil.rmtree(generated_dir)
+    generated_dir.mkdir(parents=True)
+    (generated_dir / "__init__.py").write_text("")
+
+    module_names: list[str] = []
+    schemas_dir = py_pkg_root / "schemas"
+    for kind_dir in sorted(schemas_dir.iterdir()):
+        if not kind_dir.is_dir():
+            continue
+        for schema_file in sorted(kind_dir.glob("*.schema.json")):
+            module_name = _module_name(kind_dir.name, schema_file.name)
+            out_file = generated_dir / f"{module_name}.py"
+            cmd = [
+                sys.executable,
+                "-m",
+                "datamodel_code_generator",
+                "--input",
+                str(schema_file),
+                "--input-file-type",
+                "jsonschema",
+                "--output",
+                str(out_file),
+                "--target-python-version",
+                "3.12",
+                "--output-model-type",
+                "pydantic_v2.BaseModel",
+                "--use-standard-collections",
+                "--use-union-operator",
+                "--enum-field-as-literal",
+                "all",
+                "--use-schema-description",
+                "--disable-timestamp",
+                "--class-name",
+                _class_name(kind_dir.name, schema_file.name),
+            ]
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            if result.returncode != 0:
+                print(f"FAILED generating {out_file}:\n{result.stdout}\n{result.stderr}", file=sys.stderr)
+                raise SystemExit(1)
+            module_names.append(module_name)
+
+    index_lines = ['"""Generated Pydantic v2 models — one module per schema file. DO NOT HAND-EDIT.']
+    index_lines.append("Regenerate with: scripts/generate-contracts")
+    index_lines.append('"""')
+    for name in module_names:
+        index_lines.append(f"from mirage_contracts.generated.{name} import Model as {_pascal(name)}")
+    index_lines.append("")
+    index_lines.append("__all__ = [" + ", ".join(f'"{_pascal(n)}"' for n in module_names) + "]")
+    (generated_dir / "__init__.py").write_text("\n".join(index_lines) + "\n")
+
+    # datamodel-code-generator names the top-level model class differently
+    # depending on schema `title`; normalize by re-exporting whatever class it
+    # produced as `Model` in each generated module so the barrel above is stable.
+    for name in module_names:
+        _ensure_model_alias(generated_dir / f"{name}.py")
+
+
+def _ensure_model_alias(path: Path) -> None:
+    text = path.read_text()
+    if "\nModel = " in text or text.strip().endswith("Model = "):
+        return
+    # Find the last top-level `class X(BaseModel):` and alias it as Model.
+    import re
+
+    matches = re.findall(r"^class (\w+)\(.*BaseModel.*\):", text, flags=re.MULTILINE)
+    if not matches:
+        raise SystemExit(f"no BaseModel class found in generated file {path}")
+    top_class = matches[-1]
+    path.write_text(text + f"\n\nModel = {top_class}\n")
+
+
+def _module_name(kind: str, filename: str) -> str:
+    stem = filename.replace(".schema.json", "")
+    return f"{kind}_{stem}".replace(".", "_").replace("-", "_")
+
+
+def _class_name(kind: str, filename: str) -> str:
+    return _pascal(_module_name(kind, filename))
+
+
+def _pascal(snake: str) -> str:
+    return "".join(part.capitalize() for part in snake.split("_"))
+
+
+def generate_typescript_types() -> None:
+    node = shutil.which("node")
+    npm = shutil.which("npm")
+    if not node or not npm:
+        print("node/npm not found — skipping TypeScript generation (install Node.js).", file=sys.stderr)
+        raise SystemExit(1)
+    if not (TS_PKG / "node_modules").exists():
+        print("Installing contracts/typescript node_modules ...")
+        subprocess.run(["npm", "install"], cwd=TS_PKG, check=True)
+    subprocess.run(["node", "scripts/generate-types.mjs"], cwd=TS_PKG, check=True)
+
+
+def main() -> int:
+    print("Bundling schemas into mirage_contracts/schemas ...")
+    bundle_schemas(PY_PKG / "schemas")
+    print("Bundling schemas into contracts/typescript/src/schemas ...")
+    bundle_schemas(TS_PKG / "src" / "schemas")
+
+    print("Generating Pydantic v2 models ...")
+    generate_python_models(PY_PKG)
+
+    print("Generating TypeScript types ...")
+    generate_typescript_types()
+
+    print("Done.")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -1,0 +1,55 @@
+#!/usr/bin/env python3
+"""Add the five Mirage certificate-profile JWK provisioners (Step 3,
+infra/step-ca/PROFILES.md) to the running development step-ca container.
+
+Idempotent: skips any provisioner name already present in ca.json. Requires
+the `step` CLI (smallstep) on PATH and a running `mirage-step-ca` container
+(scripts/bootstrap-development brings one up). Thin CLI wrapper around
+libs/mirage_common/step_ca_admin — the same library also backs
+tests/integration/conftest.py's ephemeral step-ca fixture.
+
+Generated dev-only private JWKs are written to
+infra/step-ca/dev-provisioner-keys/ (gitignored) so local services/tests can
+load them to mint enrollment tokens. Acceptance/production provisioner keys
+live in Secrets Manager (mirage/<environment>/step-ca), never on disk
+outside a running container — see docs/runbooks/secrets.md.
+"""
+from __future__ import annotations
+
+import subprocess
+import sys
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO_ROOT / "libs"))
+
+from mirage_common.step_ca_admin import add_provisioners, has_step_cli  # noqa: E402
+
+CONTAINER = "mirage-step-ca"
+DEV_KEYS_DIR = REPO_ROOT / "infra" / "step-ca" / "dev-provisioner-keys"
+
+
+def main() -> int:
+    check = subprocess.run(["docker", "inspect", CONTAINER], capture_output=True)
+    if check.returncode != 0:
+        print(f"{CONTAINER} is not running — run scripts/bootstrap-development first.", file=sys.stderr)
+        return 1
+    if not has_step_cli():
+        print("step CLI not found on PATH (brew install step).", file=sys.stderr)
+        return 1
+
+    added = add_provisioners(CONTAINER, keys_out_dir=DEV_KEYS_DIR)
+
+    if not added:
+        print("All five provisioners already present — nothing to do.")
+        return 0
+
+    for name in added:
+        print(f"added: {name}")
+    print(f"Added {len(added)} provisioner(s): {', '.join(added)}")
+    print(f"Dev-only private JWKs written to {DEV_KEYS_DIR} (gitignored).")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

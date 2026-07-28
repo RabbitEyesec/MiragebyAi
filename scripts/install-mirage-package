@@ -1,0 +1,76 @@
+#!/usr/bin/env python3
+"""Creates (or reuses) a dedicated virtualenv and installs the release's
+bundled Mirage wheel into it — the step that makes the rest of the release
+ZIP's scripts (install-server, upgrade-server, ...) actually runnable on a
+clean host that has never seen this source repository.
+
+Every other script in this release ZIP does `from mirage_common... import
+...` / `from mirage_contracts... import ...`; those packages do not exist
+anywhere in the ZIP as loose source, only inside packages/mirage-*.whl —
+this script is what turns "a ZIP full of scripts that import a package" into
+"a ZIP full of scripts that actually run", without requiring network access
+to PyPI for Mirage's own code (dependencies still resolve from PyPI/an
+internal index in the usual way `pip install` always has, air-gapped
+deployments substitute `--no-index --find-links <wheelhouse>`).
+"""
+from __future__ import annotations
+
+import argparse
+import glob
+import subprocess
+import sys
+from pathlib import Path
+
+RELEASE_ROOT = Path(__file__).resolve().parent.parent
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--venv", type=Path, default=RELEASE_ROOT / ".venv",
+        help="virtualenv directory to create/reuse (default: <release root>/.venv)",
+    )
+    parser.add_argument(
+        "--wheel", type=Path, default=None,
+        help="explicit wheel path; default: the single packages/mirage-*.whl in this release",
+    )
+    parser.add_argument(
+        "--find-links", type=Path, default=None,
+        help="local wheelhouse directory for air-gapped dependency installation "
+        "(passed as pip's --no-index --find-links)",
+    )
+    args = parser.parse_args()
+
+    wheel = args.wheel
+    if wheel is None:
+        candidates = sorted(glob.glob(str(RELEASE_ROOT / "packages" / "mirage-*.whl")))
+        if not candidates:
+            print("no packages/mirage-*.whl found in this release", file=sys.stderr)
+            return 1
+        if len(candidates) > 1:
+            print(f"multiple candidate wheels found, pass --wheel explicitly: {candidates}", file=sys.stderr)
+            return 1
+        wheel = Path(candidates[0])
+    if not wheel.is_file():
+        print(f"wheel not found: {wheel}", file=sys.stderr)
+        return 1
+
+    if not (args.venv / "bin" / "python").exists():
+        result = subprocess.run([sys.executable, "-m", "venv", str(args.venv)], check=False)
+        if result.returncode:
+            return result.returncode
+
+    pip_command = [str(args.venv / "bin" / "pip"), "install"]
+    if args.find_links is not None:
+        pip_command += ["--no-index", "--find-links", str(args.find_links)]
+    pip_command += [str(wheel)]
+    result = subprocess.run(pip_command, check=False)
+    if result.returncode:
+        return result.returncode
+
+    print(f"Installed {wheel.name} into {args.venv}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -1,0 +1,129 @@
+## Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+.venv/
+venv/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.tox/
+.nox/
+htmlcov/
+.coverage
+.coverage.*
+coverage.xml
+dist/
+build/
+
+## .NET / native build output (e.g. infra/broker/rdp plugin)
+bin/
+obj/
+target/
+output/
+
+## Node / TypeScript
+node_modules/
+.next/
+out/
+coverage/
+*.tsbuildinfo
+npm-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+test-results/
+playwright-report/
+.next-e2e-fixture/
+*.trace.zip
+
+## Terraform
+.terraform/
+**/.terraform/
+**/.terraform/*
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+.terraformrc
+terraform.rc
+
+## Packer
+packer_cache/
+output-*/
+
+## Release / installer build output (reproducible via `make build-release`, packer, WiX)
+release/
+releases/
+output/
+*.zip
+*.msi
+*.exe
+*.pkrvars.hcl
+
+## Secrets / env (never commit real values)
+.env
+.env.*
+!.env.example
+!.env.*.example
+!dashboard/.env.local.example
+*.pem
+!fixtures/**/*.pem
+*.key
+!fixtures/**/*.key
+*.p12
+*.pfx
+*.jks
+secrets/
+config/development.yaml
+config/acceptance.yaml
+config/production.yaml
+
+## Claude Code local state (machine-specific: absolute paths, granted
+## permissions, session transcripts, caches). Everything under .claude/ is
+## local-only unless a file is explicitly re-included below as shared project
+## instruction; there is currently no such file.
+.claude/
+.claude/settings.local.json
+
+## step-ca / dev PKI material generated at runtime
+infra/step-ca/data/
+infra/step-ca/secrets/
+infra/step-ca/dev-provisioner-keys/
+
+## Dev sandbox target SSH keypair generated at runtime (Step 7b)
+.dev-sandbox-keys/
+
+## Broker (bastion) SSH keypairs generated at runtime (Step 8b/8c)
+.broker-keys/
+
+## Randomly generated per-machine dev Keycloak test-user credentials
+## (scripts/bootstrap-keycloak-realm) — never a shared hardcoded password
+.dev-auth-keys/
+
+## Local dev volumes
+infra/compose/.data/
+*.sqlite3
+
+## OS / editor
+.DS_Store
+**/.DS_Store
+__MACOSX/
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+## Build/test scratch
+/tmp/
+*.log
+
+# Generated signed acceptance reports/packages (retain checksums in TEST_RESULTS.md)
+tests/acceptance/reports/

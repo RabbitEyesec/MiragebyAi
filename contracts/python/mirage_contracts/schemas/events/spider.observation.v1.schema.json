@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mirage.internal/schemas/events/spider.observation.v1.schema.json",
+  "title": "SpiderObservationPayload",
+  "description": "Payload for event_type=spider.observation, schema_version major=1. Read-only sandbox telemetry recorded by MirageSpider (Appendix G, Step 5). Priority 1 (revised): Sysmon/Windows Event Log ingestion is owned by Elastic Agent/Fleet, not MirageSpider (see docs/architecture/windows-telemetry.md) — Spider's own PROCESS_*/FILE_*/NETWORK_CONNECTION/REGISTRY_MODIFY types remain for the fingerprint-gate and dev-sandbox-target use cases that predate Elastic Agent's own Sysmon ingestion, and now carry optional host_id/process_guid/correlation_id so they can be correlated against (not duplicated with) Elastic Agent's own equivalent events for the same host/process. The Mirage-specific types (DECOY_INTERACTION, CONTROLLER_ACTION_OBSERVED, ANALYST_INTERACTION_OBSERVED, AI_INTERACTION_OBSERVED, USER_INTERACTION_INDICATOR) describe signals Elastic Agent has no way to observe at all. Carried in the shared envelope (Appendix C), which supplies case_id tagging, ordering (sequence), and actor identity — this schema only describes the observation itself.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["observation_type", "subject", "observed_at"],
+  "properties": {
+    "observation_type": {
+      "type": "string",
+      "enum": [
+        "PROCESS_START", "PROCESS_STOP", "FILE_CREATE", "FILE_MODIFY", "FILE_DELETE",
+        "NETWORK_CONNECTION", "REGISTRY_MODIFY", "ARTIFACT_INTERACTION",
+        "DECOY_INTERACTION", "CONTROLLER_ACTION_OBSERVED",
+        "ANALYST_INTERACTION_OBSERVED", "AI_INTERACTION_OBSERVED",
+        "USER_INTERACTION_INDICATOR"
+      ]
+    },
+    "subject": {
+      "type": "string",
+      "description": "What was observed — process image path, file path, registry key, or connection descriptor, depending on observation_type.",
+      "minLength": 1,
+      "maxLength": 1024
+    },
+    "detail": {
+      "type": "object",
+      "description": "Optional structured detail, shape depends on observation_type. Deliberately permissive at this layer (Prompt 1 scope); Stage 7's artifact/canary work may tighten this per-type.",
+      "additionalProperties": false,
+      "properties": {
+        "pid": {"type": "integer", "minimum": 0},
+        "parent_pid": {"type": "integer", "minimum": 0},
+        "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+        "remote_address": {"type": "string", "maxLength": 256},
+        "remote_port": {"type": "integer", "minimum": 0, "maximum": 65535},
+        "registry_key": {"type": "string", "maxLength": 1024},
+        "artifact_id": {
+          "type": "string",
+          "pattern": "^[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+        },
+        "host_id": {
+          "type": "string",
+          "maxLength": 256,
+          "description": "Stable per-host identifier matching Elastic Agent's own host.id for this sandbox — the join key for correlating this observation against Elastic Agent's independently-collected Sysmon/Windows Event Log data for the same host, per docs/architecture/windows-telemetry.md. Never used to imply Spider collected the same event Elastic Agent already owns."
+        },
+        "process_guid": {
+          "type": "string",
+          "pattern": "^\\{[0-9A-Fa-f-]{36}\\}$",
+          "description": "Sysmon-format ProcessGuid ({8-4-4-4-12 hex, braced}) for the same process this observation concerns, when known — the join key against Sysmon's own process-creation event for PROCESS_START/PROCESS_STOP observations specifically."
+        },
+        "correlation_id": {
+          "type": "string",
+          "description": "Caller-supplied identifier grouping this observation with other events describing the same real-world action across sources (e.g. a controller action's action_id, or an analyst directive's id) — distinct from case_id/session_id, which only say WHICH engagement, not which specific cross-source action."
+        }
+      }
+    },
+    "observed_at": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z$"
+    }
+  }
+}

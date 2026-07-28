@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mirage.internal/schemas/commands/envelope.schema.json",
+  "title": "MirageCommandEnvelope",
+  "description": "The envelope wrapping every structured sandbox action (spec Appendix C). `params` is validated separately against the schema registered for `command_type`'s major schema_version. Model/AI output is NEVER a shell command — command_type is always one of a fixed, registered set (Appendix I; framework enforced here, concrete sandbox action types registered in Stage 4 / Step 9b).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "command_id", "command_type", "schema_version", "case_id", "sandbox_id",
+    "expected_state_version", "issued_by", "policy_decision_id", "params", "expires_at"
+  ],
+  "properties": {
+    "command_id": {
+      "type": "string",
+      "pattern": "^[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+    },
+    "command_type": {
+      "type": "string",
+      "description": "Dot-namespaced command type from the fixed registered action set, e.g. 'sandbox.place_artifact'.",
+      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$"
+    },
+    "schema_version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+$"
+    },
+    "case_id": {
+      "type": "string",
+      "pattern": "^[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+    },
+    "sandbox_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "expected_state_version": {
+      "type": "integer",
+      "description": "Optimistic-concurrency check against sandbox_instances.state_version; a mismatch rejects the command.",
+      "minimum": 0
+    },
+    "issued_by": {
+      "type": "string",
+      "enum": ["AI", "ANALYST", "SYSTEM"]
+    },
+    "policy_decision_id": {
+      "type": "string",
+      "pattern": "^[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+    },
+    "params": {
+      "type": "object",
+      "description": "command_type-specific parameters, validated against the registered params schema for (command_type, schema_version major)."
+    },
+    "expires_at": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z$"
+    }
+  }
+}

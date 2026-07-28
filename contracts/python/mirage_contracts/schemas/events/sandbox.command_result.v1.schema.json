@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mirage.internal/schemas/events/sandbox.command_result.v1.schema.json",
+  "title": "SandboxCommandResultPayload",
+  "description": "Payload for event_type=sandbox.command_result, schema_version major=1. Emitted by MirageEnvironmentController (Step 9b) for every executed command. output_tag is mandatory on every result carrying observable output.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["command_id", "command_type", "status", "output_tag", "journal_entry_id"],
+  "properties": {
+    "command_id": {"type": "string", "pattern": "^[0-7][0-9A-HJKMNP-TV-Z]{25}$"},
+    "command_type": {"type": "string", "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$"},
+    "status": {"type": "string", "enum": ["SUCCESS", "FAILED", "REJECTED", "TIMEOUT"]},
+    "output_tag": {"type": "string", "enum": ["REAL_OS_OUTPUT", "DECOY_SERVICE_OUTPUT", "AI_GENERATED_INTERACTION", "ANALYST_MESSAGE"]},
+    "journal_entry_id": {"type": "string", "pattern": "^[0-7][0-9A-HJKMNP-TV-Z]{25}$"},
+    "rollback_action_id": {
+      "oneOf": [
+        {"type": "string", "pattern": "^[0-7][0-9A-HJKMNP-TV-Z]{25}$"},
+        {"type": "null"}
+      ]
+    },
+    "error_detail": {"type": ["string", "null"], "maxLength": 2048}
+  }
+}

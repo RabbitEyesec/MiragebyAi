@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mirage.local/schemas/events/analyst.directive.v1.schema.json",
+  "title": "AnalystDirectiveV1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["directive_id", "case_id", "objective", "priority", "status", "created_by", "expires_at"],
+  "properties": {
+    "directive_id": {"type": "string", "pattern": "^[0-7][0-9A-HJKMNP-TV-Z]{25}$"},
+    "case_id": {"type": "string", "pattern": "^[0-7][0-9A-HJKMNP-TV-Z]{25}$"},
+    "objective": {"type": "string", "minLength": 1, "maxLength": 512},
+    "priority": {"enum": ["LOW", "NORMAL", "HIGH", "URGENT"]},
+    "status": {"enum": ["SUBMITTED", "ACKNOWLEDGED", "QUEUED", "APPLIED", "REJECTED", "EXPIRED", "CANCELLED"]},
+    "created_by": {"type": "string", "minLength": 1, "maxLength": 256},
+    "expires_at": {"type": ["string", "null"], "format": "date-time"}
+  }
+}

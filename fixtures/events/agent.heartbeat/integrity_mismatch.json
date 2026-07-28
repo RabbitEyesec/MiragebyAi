@@ -1,0 +1,26 @@
+{
+  "actor_type": "ENDPOINT_AGENT",
+  "case_id": null,
+  "classification": "INTERNAL",
+  "event_id": "01KYB9FAFQJCHBCDQA6HF33XMW",
+  "event_time": "2026-07-25T00:05:49.687Z",
+  "event_type": "agent.heartbeat",
+  "ingest_time": "2026-07-25T00:05:49.687Z",
+  "integrity": {
+    "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "payload": {
+    "agent_id": "AGENT-DEV-0001",
+    "build_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "certificate_serial": "1A2B3C",
+    "health_state": "HEALTHY",
+    "queue_depth": 2,
+    "role": "ENDPOINT",
+    "uptime_seconds": 3600,
+    "version": "1.0.0"
+  },
+  "schema_version": "1.1",
+  "sequence": 42,
+  "session_id": null,
+  "source_id": "AGENT-DEV-0001"
+}

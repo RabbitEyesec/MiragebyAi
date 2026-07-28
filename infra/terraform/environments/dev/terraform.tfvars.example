@@ -1,0 +1,7 @@
+# Copy to terraform.tfvars (gitignored) and fill in real values before
+# `terraform apply`. LAB_VERIFICATION_REQUIRED — see LAB_EXECUTION_CHECKLIST.md.
+
+aws_region           = "us-east-1"
+aws_account_id        = "REPLACE_ME_AWS_ACCOUNT_ID"
+availability_zone     = "us-east-1a"
+allowed_analyst_cidr  = "REPLACE_ME_YOUR_IP/32"

@@ -1,0 +1,51 @@
+# Step 7b: a minimal dev sandbox target ("Minimal Windows sandbox with
+# Spider + Controller + HTTP/SSH/RDP services, so brokers have a real
+# target... Stand up a dev sandbox (not yet golden) with target services
+# and a fingerprintable profile. Step 9a promotes it to the signed AMI.")
+#
+# This is deliberately NOT a Windows sandbox — there is no way to run one
+# locally in this environment. It stands in for the HTTP/SSH protocol
+# surface a real Windows sandbox (Step 9a's golden AMI) will present, so
+# Stage 3's brokers (Step 8b/8c) have a real, reachable target to route
+# connections to during local development. RDP is intentionally NOT
+# included here: there is no viable macOS/Linux-native RDP SERVER to
+# genuinely test against, and faking one would violate this project's own
+# "no fake success" rule — RDP brokering (Step 8d) against a real target is
+# LAB_VERIFICATION_REQUIRED on a real Windows host, same as MirageSpider's
+# and MirageEnvironmentController's Windows service shims already are.
+#
+# A separate compose project/network from docker-compose.yml (mirage-control):
+# this represents the SANDBOX network segment (§5's topology table), not
+# control-plane infrastructure — kept as its own file so `docker compose
+# -f infra/compose/docker-compose.yml up` (the platform) and `-f
+# infra/compose/docker-compose.dev-sandbox.yml up` (a target) are
+# independently startable, matching the real network's isolation.
+
+name: mirage-dev-sandbox
+
+networks:
+  mirage-sandbox:
+    name: mirage-sandbox-dev
+
+services:
+  dev-sandbox-http:
+    image: nginx:1.27-alpine
+    container_name: mirage-dev-sandbox-http
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8090:80"
+    networks: [mirage-sandbox]
+
+  dev-sandbox-ssh:
+    image: lscr.io/linuxserver/openssh-server:10.3_p1-r0-ls232
+    container_name: mirage-dev-sandbox-ssh
+    restart: unless-stopped
+    environment:
+      PUBLIC_KEY: ${MIRAGE_DEV_SANDBOX_SSH_PUBLIC_KEY:?run scripts/bootstrap-dev-sandbox-keys and add the printed line to .env}
+      USER_NAME: employee01
+      PASSWORD_ACCESS: "false"
+      PUID: "1000"
+      PGID: "1000"
+    ports:
+      - "127.0.0.1:2222:2222"
+    networks: [mirage-sandbox]

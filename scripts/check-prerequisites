@@ -1,0 +1,62 @@
+#!/usr/bin/env python3
+"""Hard gate: fails (non-zero exit) if a tool required for local development
+is missing. Run this before anything else. For a full non-fatal diagnostic
+report (including optional/lab-only tools), use scripts/doctor instead.
+"""
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _lib import Result, print_header, print_table, run, tool_version, which  # noqa: E402
+
+
+def check_python() -> Result:
+    for candidate in ("python3.12", "python3"):
+        path = which(candidate)
+        if not path:
+            continue
+        code, out = run([candidate, "--version"])
+        if code == 0 and "3.12" in out:
+            return Result("python3.12", True, out)
+    # Fall back: report whatever python3 is, but flag it.
+    code, out = run(["python3", "--version"])
+    return Result(
+        "python3.12",
+        False,
+        f"found {out or 'nothing'}, need 3.12.x (see ARCHITECTURE_DECISIONS.md ADR-0003)",
+    )
+
+
+def check_docker_daemon() -> Result:
+    if not which("docker"):
+        return Result("docker daemon", False, "docker CLI not found")
+    code, out = run(["docker", "info"], timeout=10)
+    return Result("docker daemon", code == 0, "reachable" if code == 0 else out[:200])
+
+
+def main() -> int:
+    print_header("Mirage — required prerequisites")
+    results = [
+        check_python(),
+        tool_version("git"),
+        tool_version("docker"),
+        Result("docker compose", *(lambda c, o: (c == 0, o))(*run(["docker", "compose", "version"]))),
+        check_docker_daemon(),
+        tool_version("node"),
+        tool_version("npm"),
+    ]
+    ok = print_table(results)
+    print()
+    if ok:
+        print("All required prerequisites satisfied.")
+        return 0
+    print("Missing required prerequisite(s) above. Install them and re-run.")
+    print("Optional/lab-only tooling (terraform, packer, tfsec, aws, nats CLI, WiX) is")
+    print("reported by scripts/doctor, not required to pass this gate.")
+    return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

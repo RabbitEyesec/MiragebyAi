@@ -1,0 +1,390 @@
+x-mirage-common-env: &mirage-common-env
+  MIRAGE_ENV: development
+
+x-mirage-app-env: &mirage-app-env
+  MIRAGE_POSTGRES_HOST: postgres
+  MIRAGE_POSTGRES_PORT: "5432"
+  MIRAGE_POSTGRES_USER: ${MIRAGE_POSTGRES_USER:-mirage_dev}
+  MIRAGE_POSTGRES_PASSWORD: ${MIRAGE_POSTGRES_PASSWORD:-mirage_dev_local_only}
+  MIRAGE_POSTGRES_DB: ${MIRAGE_POSTGRES_DB:-mirage}
+  MIRAGE_NATS_URL: nats://nats:4222
+  MIRAGE_STEP_CA_URL: https://step-ca:9000
+  MIRAGE_PROXY_SHARED_SECRET: ${MIRAGE_PROXY_SHARED_SECRET:?set in .env — see .env.example}  # secret-scan: ignore (env-var reference, not a literal secret value)
+
+name: mirage-dev
+
+networks:
+  mirage-control:
+    name: mirage-control-dev
+
+volumes:
+  mirage-postgres-data:
+  mirage-nats-data:
+  mirage-elastic-data:
+  mirage-keycloak-data:
+  mirage-stepca-data:
+  mirage-minio-data:
+  mirage-artifact-quarantine:
+
+services:
+  postgres:
+    image: postgres:16.4
+    container_name: mirage-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${MIRAGE_POSTGRES_USER:-mirage_dev}
+      POSTGRES_PASSWORD: ${MIRAGE_POSTGRES_PASSWORD:-mirage_dev_local_only}
+      POSTGRES_DB: ${MIRAGE_POSTGRES_DB:-mirage}
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - mirage-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    networks: [mirage-control]
+
+  nats:
+    image: nats:2.10-alpine
+    container_name: mirage-nats
+    restart: unless-stopped
+    command:
+      - "-js"
+      - "-sd=/data"
+      - "-m=8222"
+    ports:
+      - "127.0.0.1:4222:4222"
+      - "127.0.0.1:8222:8222"
+    volumes:
+      - mirage-nats-data:/data
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8222/healthz"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    networks: [mirage-control]
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.15.0
+    container_name: mirage-elasticsearch
+    restart: unless-stopped
+    environment:
+      discovery.type: single-node
+      xpack.security.enabled: "false"
+      ES_JAVA_OPTS: "-Xms1g -Xmx1g"
+    ports:
+      - "127.0.0.1:9200:9200"
+    volumes:
+      - mirage-elastic-data:/usr/share/elasticsearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9200/_cluster/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+    networks: [mirage-control]
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:25.0
+    container_name: mirage-keycloak
+    restart: unless-stopped
+    command: ["start-dev"]
+    environment:
+      KEYCLOAK_ADMIN: ${MIRAGE_KEYCLOAK_ADMIN_USER:-admin}
+      KEYCLOAK_ADMIN_PASSWORD: ${MIRAGE_KEYCLOAK_ADMIN_PASSWORD:-mirage_dev_local_only}
+      KC_PROXY_HEADERS: xforwarded
+      KC_HOSTNAME: http://localhost:8081
+      KC_HOSTNAME_BACKCHANNEL_DYNAMIC: "true"
+    ports:
+      - "127.0.0.1:8081:8080"
+    volumes:
+      - mirage-keycloak-data:/opt/keycloak/data
+    healthcheck:
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/localhost/8080 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+    networks: [mirage-control]
+
+  step-ca:
+    image: smallstep/step-ca:0.27.4
+    container_name: mirage-step-ca
+    restart: unless-stopped
+    environment:
+      DOCKER_STEPCA_INIT_NAME: "Mirage Development CA"
+      DOCKER_STEPCA_INIT_DNS_NAMES: "localhost,step-ca"
+      DOCKER_STEPCA_INIT_PROVISIONER_NAME: "mirage-enrollment"
+      DOCKER_STEPCA_INIT_PASSWORD: ${MIRAGE_STEP_CA_PASSWORD:-mirage_dev_local_only}
+    ports:
+      - "127.0.0.1:9000:9000"
+    volumes:
+      - mirage-stepca-data:/home/step
+    healthcheck:
+      test: ["CMD", "step", "ca", "health", "--ca-url=https://localhost:9000", "--root=/home/step/certs/root_ca.crt"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+    networks: [mirage-control]
+
+  # Local S3-compatible evidence adapter only. This validates S3 API,
+  # versioning, multipart, and object-lock logic; it does NOT prove AWS S3,
+  # AWS KMS, or AWS Object Lock behavior.
+  minio:
+    image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+    container_name: mirage-minio
+    restart: unless-stopped
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: ${MIRAGE_MINIO_ACCESS_KEY:-mirage_dev_minio}
+      MINIO_ROOT_PASSWORD: ${MIRAGE_MINIO_SECRET_KEY:-mirage_dev_local_only_minio}
+    ports:
+      - "127.0.0.1:9002:9000"
+      - "127.0.0.1:9003:9001"
+    volumes:
+      - mirage-minio-data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    networks: [mirage-control]
+
+  minio-init:
+    image: minio/mc:RELEASE.2025-04-16T18-13-26Z
+    restart: "no"
+    depends_on:
+      minio: { condition: service_healthy }
+    environment:
+      MINIO_ROOT_USER: ${MIRAGE_MINIO_ACCESS_KEY:-mirage_dev_minio}
+      MINIO_ROOT_PASSWORD: ${MIRAGE_MINIO_SECRET_KEY:-mirage_dev_local_only_minio}
+    entrypoint:
+      - /bin/sh
+      - -ec
+      - |
+        mc alias set local http://minio:9000 "$${MINIO_ROOT_USER}" "$${MINIO_ROOT_PASSWORD}"
+        mc mb --with-lock --ignore-existing local/mirage-evidence
+        mc version enable local/mirage-evidence
+    networks: [mirage-control]
+
+  # --- Application services (Task #17) --------------------------------
+  # Every mirage_* Python package installs as a single distribution
+  # (pyproject.toml's "one dependency set, one venv" design) but ships as
+  # five INDEPENDENT images, one per service.Dockerfile, matching "deployment
+  # units stay separated by directory and by their own Dockerfile
+  # ENTRYPOINT." All five need scripts/bootstrap-step-ca-provisioners and
+  # scripts/bootstrap-keycloak-realm to have already been run against this
+  # same stack (see docs/runbooks/bootstrap.md) — mirage-api/agent-ingestion
+  # mount the dev provisioner keys those scripts write; mirage-api/
+  # sandbox-gateway validate OIDC tokens against the realm they bootstrap.
+
+  mirage-api:
+    build:
+      context: ../..
+      dockerfile: services/mirage-api/Dockerfile
+    container_name: mirage-api
+    restart: unless-stopped
+    environment:
+      <<: *mirage-app-env
+      MIRAGE_NATS_MONITORING_URL: http://nats:8222/healthz
+      MIRAGE_ELASTICSEARCH_URL: http://elasticsearch:9200
+      MIRAGE_KEYCLOAK_ISSUER_URL: http://keycloak:8080/realms/mirage
+      MIRAGE_AGENT_INGESTION_URL: http://mirage-agent-ingestion:8010
+      MIRAGE_EVIDENCE_BUCKET: mirage-evidence
+      MIRAGE_EVIDENCE_REGION: us-east-1
+      MIRAGE_EVIDENCE_ENDPOINT_URL: http://minio:9000
+      MIRAGE_EVIDENCE_OBJECT_LOCK_MODE: GOVERNANCE
+      MIRAGE_EVIDENCE_RETENTION_DAYS: "7"
+      MIRAGE_EVIDENCE_MULTIPART_THRESHOLD_MB: "8"
+      MIRAGE_EVIDENCE_MAX_RETRIES: "3"
+      MIRAGE_EVIDENCE_REQUEST_TIMEOUT_SECONDS: "10"
+      MIRAGE_KMS_SIGNING_KEY_ARN: LOCAL_DEV_NO_KMS
+      MIRAGE_CANARY_INGESTION_HMAC: ${MIRAGE_CANARY_INGESTION_HMAC:-mirage_dev_local_only_canary}
+      AWS_ACCESS_KEY_ID: ${MIRAGE_MINIO_ACCESS_KEY:-mirage_dev_minio}
+      AWS_SECRET_ACCESS_KEY: ${MIRAGE_MINIO_SECRET_KEY:-mirage_dev_local_only_minio}
+      AWS_EC2_METADATA_DISABLED: "true"
+    ports:
+      # Host port 18000, not 8000 — 8000 is a very common default already
+      # claimed by other software on a typical dev machine (confirmed
+      # empirically: `docker compose up` failed with "port is already
+      # allocated" on 8000 during Task #17's own verification).
+      - "127.0.0.1:18000:8000"
+    volumes:
+      - ../step-ca/dev-provisioner-keys:/app/infra/step-ca/dev-provisioner-keys:ro
+      - mirage-artifact-quarantine:/tmp/mirage-artifact-quarantine
+    depends_on:
+      postgres: { condition: service_healthy }
+      nats: { condition: service_healthy }
+      elasticsearch: { condition: service_healthy }
+      keycloak: { condition: service_healthy }
+      step-ca: { condition: service_healthy }
+      minio-init: { condition: service_completed_successfully }
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/openapi.json', timeout=3)\""]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    networks: [mirage-control]
+
+  mirage-dashboard:
+    build:
+      context: ../..
+      dockerfile: dashboard/Dockerfile
+    container_name: mirage-dashboard
+    restart: unless-stopped
+    environment:
+      MIRAGE_OIDC_ISSUER_URL: http://localhost:8081/realms/mirage
+      MIRAGE_OIDC_INTERNAL_ISSUER_URL: http://keycloak:8080/realms/mirage
+      MIRAGE_OIDC_CLIENT_ID: mirage-dashboard
+      # Host-facing canonical URL — port 3000 is not assumed free (see
+      # scripts/dev-auth-doctor and ARCHITECTURE_DECISIONS.md); the container's
+      # own internal port stays 3000 (see the port mapping below), only the
+      # host-side port and this browser-facing URL are 3001.
+      MIRAGE_DASHBOARD_URL: http://localhost:3001
+      MIRAGE_API_URL: http://mirage-api:8000
+      MIRAGE_SESSION_SECRET: ${MIRAGE_SESSION_SECRET:?set in .env — minimum 32 characters} # secret-scan: ignore
+    ports:
+      - "127.0.0.1:3001:3000"
+    depends_on:
+      mirage-api: { condition: service_healthy }
+      keycloak: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/ >/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    networks: [mirage-control]
+
+  mirage-agent-ingestion:
+    build:
+      context: ../..
+      dockerfile: services/mirage-agent-ingestion/Dockerfile
+    container_name: mirage-agent-ingestion
+    restart: unless-stopped
+    environment:
+      <<: *mirage-app-env
+    ports:
+      - "127.0.0.1:8010:8010"
+    volumes:
+      - ../step-ca/dev-provisioner-keys:/app/infra/step-ca/dev-provisioner-keys:ro
+    depends_on:
+      postgres: { condition: service_healthy }
+      nats: { condition: service_healthy }
+      step-ca: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8010/health', timeout=3)\""]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    networks: [mirage-control]
+
+  mirage-sandbox-gateway:
+    build:
+      context: ../..
+      dockerfile: services/mirage-sandbox-gateway/Dockerfile
+    container_name: mirage-sandbox-gateway
+    restart: unless-stopped
+    environment:
+      <<: *mirage-app-env
+      MIRAGE_KEYCLOAK_ISSUER_URL: http://keycloak:8080/realms/mirage
+    ports:
+      - "127.0.0.1:8020:8020"
+    depends_on:
+      postgres: { condition: service_healthy }
+      nats: { condition: service_healthy }
+      keycloak: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8020/health', timeout=3)\""]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    networks: [mirage-control]
+
+  mirage-worker:
+    build:
+      context: ../..
+      dockerfile: services/mirage-worker/Dockerfile
+    container_name: mirage-worker
+    restart: unless-stopped
+    environment:
+      <<: *mirage-app-env
+    depends_on:
+      postgres: { condition: service_healthy }
+      nats: { condition: service_healthy }
+    networks: [mirage-control]
+
+  mirage-artifact-scanner:
+    build:
+      context: ../..
+      dockerfile: services/mirage-artifact-scanner/Dockerfile
+    container_name: mirage-artifact-scanner
+    restart: unless-stopped
+    environment:
+      <<: *mirage-app-env
+      ARTIFACT_MAX_UPLOAD_MB: "250"
+      ARTIFACT_MAX_ARCHIVE_DEPTH: "3"
+      ARTIFACT_MAX_ARCHIVE_MEMBERS: "1000"
+      ARTIFACT_MAX_EXPANDED_MB: "500"
+      ARTIFACT_MAX_COMPRESSION_RATIO: "100"
+      ARTIFACT_MAX_MEMBER_MB: "250"
+      ARTIFACT_SCAN_TIMEOUT_SECONDS: "120"
+      ARTIFACT_CLAMAV_TIMEOUT_SECONDS: "60"
+      ARTIFACT_YARA_TIMEOUT_SECONDS: "30"
+      ARTIFACT_OLETOOLS_TIMEOUT_SECONDS: "30"
+      ARTIFACT_YARA_RULES_PATH: /app/config/yara/mirage-base-v1.yar
+    volumes:
+      - mirage-artifact-quarantine:/tmp/mirage-artifact-quarantine
+      - ../../config/yara:/app/config/yara:ro
+    depends_on:
+      postgres: { condition: service_healthy }
+    networks: [mirage-control]
+
+  # Local report worker uses a transient RSA key and local system clock.
+  # The resulting package is integrity-verifiable but is explicitly not
+  # evidence of AWS KMS or independently trusted timestamp operation.
+  mirage-report-worker:
+    build:
+      context: ../..
+      dockerfile: services/mirage-report-worker/Dockerfile
+    container_name: mirage-report-worker
+    restart: unless-stopped
+    environment:
+      <<: *mirage-app-env
+      MIRAGE_EVIDENCE_BUCKET: mirage-evidence
+      MIRAGE_EVIDENCE_REGION: us-east-1
+      MIRAGE_EVIDENCE_ENDPOINT_URL: http://minio:9000
+      MIRAGE_EVIDENCE_OBJECT_LOCK_MODE: GOVERNANCE
+      MIRAGE_EVIDENCE_RETENTION_DAYS: "7"
+      MIRAGE_EVIDENCE_MULTIPART_THRESHOLD_MB: "8"
+      MIRAGE_EVIDENCE_MAX_RETRIES: "3"
+      MIRAGE_EVIDENCE_REQUEST_TIMEOUT_SECONDS: "10"
+      MIRAGE_KMS_SIGNING_KEY_ARN: LOCAL_DEV_NO_KMS
+      MIRAGE_EXPORT_SIGNER: LOCAL_DEVELOPMENT
+      AWS_ACCESS_KEY_ID: ${MIRAGE_MINIO_ACCESS_KEY:-mirage_dev_minio}
+      AWS_SECRET_ACCESS_KEY: ${MIRAGE_MINIO_SECRET_KEY:-mirage_dev_local_only_minio}
+      AWS_EC2_METADATA_DISABLED: "true"
+    depends_on:
+      postgres: { condition: service_healthy }
+      minio-init: { condition: service_completed_successfully }
+    networks: [mirage-control]
+
+  mirage-outbox-relay:
+    build:
+      context: ../..
+      dockerfile: services/mirage-outbox-relay/Dockerfile
+    container_name: mirage-outbox-relay
+    restart: unless-stopped
+    environment:
+      <<: *mirage-app-env
+    depends_on:
+      postgres: { condition: service_healthy }
+      nats: { condition: service_healthy }
+    networks: [mirage-control]
+
+# NOTE: the Nginx HTTP broker (infra/broker/http) and the OpenSSH bastion
+# (infra/broker/ssh) are provisioned by infra/compose/docker-compose.broker.yml
+# (Step 8b/8c, ADR-0020) rather than here — brokers steer traffic BETWEEN
+# the employee/sandbox targets this compose file has no opinion about, a
+# genuinely separate concern from the control-plane services above. This
+# file is additive, not rewritten from scratch, so `git log -p` on it tracks
+# exactly when each unit came online.

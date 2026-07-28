@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mirage.internal/infra/fingerprint/baseline.schema.json",
+  "title": "FingerprintBaseline",
+  "description": "A versioned sandbox fingerprint baseline (spec §6.5, 'a versioned file with named comparators'). Step 7b produces one baseline per dev sandbox target; Step 10's fingerprint gate harness is the thing that RUNS comparisons against a baseline like this one — this schema only describes the baseline's shape, not the comparison logic. Not part of the Appendix A event/command contracts pipeline (this is a static config artifact, not a message envelope), so it is hand-validated (tests/unit/test_fingerprint_baseline.py) rather than codegen'd, matching config/schema.json's precedent.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["baseline_version", "scenario", "target_id", "checks"],
+  "properties": {
+    "baseline_version": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"},
+    "scenario": {"type": "string", "minLength": 1, "maxLength": 256},
+    "target_id": {"type": "string", "minLength": 1, "maxLength": 256},
+    "checks": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "hostname_domain", "user_profiles_and_sids", "installed_software",
+        "file_timestamps", "processes_services", "network", "uptime", "decoy_service_banners"
+      ],
+      "properties": {
+        "hostname_domain": {"$ref": "#/$defs/Check"},
+        "user_profiles_and_sids": {"$ref": "#/$defs/Check"},
+        "installed_software": {"$ref": "#/$defs/Check"},
+        "file_timestamps": {"$ref": "#/$defs/Check"},
+        "processes_services": {"$ref": "#/$defs/Check"},
+        "network": {"$ref": "#/$defs/Check"},
+        "uptime": {"$ref": "#/$defs/Check"},
+        "decoy_service_banners": {"$ref": "#/$defs/Check"}
+      }
+    }
+  },
+  "$defs": {
+    "Check": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["comparator", "level", "expected"],
+      "properties": {
+        "comparator": {
+          "type": "string",
+          "enum": ["exact", "baseline_match", "required_subset", "no_file_predates_date", "allowed_set_forbidden_patterns", "range"]
+        },
+        "level": {"type": "string", "enum": ["MUST", "SHOULD"]},
+        "expected": {
+          "description": "Shape depends on `comparator` — e.g. a literal value for 'exact', {min,max} for 'range', {required,ignored_patterns} for 'required_subset', {allowed,forbidden_patterns} for 'allowed_set_forbidden_patterns'.",
+          "type": "object"
+        }
+      }
+    }
+  }
+}

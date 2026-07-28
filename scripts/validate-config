@@ -1,0 +1,204 @@
+#!/usr/bin/env python3
+"""Validate a Mirage config YAML file against config/schema.json.
+
+Usage:
+    scripts/validate-config config/development.yaml
+    scripts/validate-config config/acceptance.yaml --strict
+    scripts/validate-config --scan-secrets
+
+--strict     Additionally reject any REPLACE_ME_* placeholder value (used for
+             acceptance/production configs — a real deploy must have replaced
+             every one).
+--scan-secrets   Scan git-tracked files for values that look like committed
+             secrets (AWS keys, generic high-entropy assignments to
+             password/secret/token/api_key-named fields) that are NOT the
+             known local-dev placeholder values. Exits non-zero if any found.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+
+try:
+    import yaml
+    from jsonschema import Draft202012Validator
+except ImportError as exc:
+    print(
+        "error: missing dependencies (pyyaml, jsonschema).\n"
+        "Activate the project venv first:\n"
+        "  source .venv/bin/activate\n"
+        "or create it:\n"
+        "  python3.12 -m venv .venv && source .venv/bin/activate && pip install -e '.[dev]'",
+        file=sys.stderr,
+    )
+    raise SystemExit(2) from exc
+
+
+PLACEHOLDER_RE = re.compile(r"REPLACE_ME_")
+
+SECRET_FIELD_PATTERN = r"(?:password|secret|token|api_key|apikey)"
+KNOWN_SAFE_VALUES = {
+    "mirage_dev_local_only",
+    "mirage_dev",
+    "",
+}
+SECRET_SCAN_IGNORE_MARKER = "secret-scan: ignore"
+AWS_KEY_RE = re.compile(r"AKIA[0-9A-Z]{16}")
+ENV_VAR_REF_RE = re.compile(r"^\$\{[A-Za-z_][A-Za-z0-9_]*(:-(?P<default>.*))?\}$")
+# group(1) = the matched field-name token, group(2) = the assigned value.
+# Used only for config-shaped files (yaml/env/json/...): `:` or `=`, quoted or
+# bare value both count, because those files genuinely use `key: value` for
+# actual configuration.
+GENERIC_ASSIGNMENT_RE = re.compile(
+    r"^\s*[\w.\-]*(" + SECRET_FIELD_PATTERN + r")[\w.\-]*\s*[:=]\s*[\"']?([^\"'#\n]{6,})[\"']?\s*$",
+    re.IGNORECASE,
+)
+# Used for general source code (.py/.ts/.js/...), where `key: Type` is a type
+# annotation, not a secret assignment (e.g. generated `enrollment_token: str`
+# Pydantic fields / `enrollment_token: string;` TS interface members are NOT
+# secrets — they're field declarations). Only a literal `=` assignment to an
+# actual quoted string constant counts.
+SOURCE_LITERAL_RE = re.compile(
+    r"^\s*[\w.\-]*(" + SECRET_FIELD_PATTERN + r")[\w.\-]*\s*(?::\s*[\w.\[\]|<> ]+\s*)?=\s*[\"']([^\"'#\n]{6,})[\"']\s*",
+    re.IGNORECASE,
+)
+CONFIG_LIKE_EXTS = {".yaml", ".yml", ".env", ".json", ".toml", ".ini", ".cfg", ".conf"}
+
+
+def load_schema() -> dict:
+    return json.loads((REPO_ROOT / "config" / "schema.json").read_text())
+
+
+def validate_file(path: Path, strict: bool) -> list[str]:
+    errors: list[str] = []
+    if not path.exists():
+        return [f"file not found: {path}"]
+    try:
+        data = yaml.safe_load(path.read_text())
+    except yaml.YAMLError as exc:
+        return [f"YAML parse error: {exc}"]
+
+    schema = load_schema()
+    validator = Draft202012Validator(schema)
+    for err in sorted(validator.iter_errors(data), key=lambda e: list(e.absolute_path)):
+        loc = "/".join(str(p) for p in err.absolute_path) or "<root>"
+        errors.append(f"{loc}: {err.message}")
+
+    if strict:
+        placeholders = _find_placeholders(data)
+        for loc, value in placeholders:
+            errors.append(f"{loc}: unresolved placeholder value {value!r} (--strict)")
+
+    return errors
+
+
+def _find_placeholders(node, path: str = "") -> list[tuple[str, str]]:
+    found: list[tuple[str, str]] = []
+    if isinstance(node, dict):
+        for k, v in node.items():
+            found.extend(_find_placeholders(v, f"{path}/{k}" if path else k))
+    elif isinstance(node, list):
+        for i, v in enumerate(node):
+            found.extend(_find_placeholders(v, f"{path}[{i}]"))
+    elif isinstance(node, str) and PLACEHOLDER_RE.search(node):
+        found.append((path, node))
+    return found
+
+
+def scan_secrets() -> list[str]:
+    """Scan git-tracked (and staged) text files for likely committed secrets."""
+    problems: list[str] = []
+    # --cached --others --exclude-standard: every file that would be visible to
+    # `git add .` right now — tracked AND untracked-but-not-gitignored. Using
+    # plain `git ls-files` would silently scan zero files on a repo where
+    # nothing has been committed/staged yet.
+    code_result = subprocess.run(
+        ["git", "-C", str(REPO_ROOT), "ls-files", "--cached", "--others", "--exclude-standard"],
+        capture_output=True,
+        text=True,
+    )
+    if code_result.returncode != 0:
+        return ["git ls-files failed — is this a git repository?"]
+
+    files = [f for f in code_result.stdout.splitlines() if f]
+    text_exts_skip = {".png", ".jpg", ".jpeg", ".ico", ".woff", ".woff2", ".pdf", ".docx"}
+    for rel in files:
+        p = REPO_ROOT / rel
+        if p.suffix.lower() in text_exts_skip or not p.is_file():
+            continue
+        try:
+            content = p.read_text(errors="ignore")
+        except Exception:
+            continue
+        is_config_like = p.suffix.lower() in CONFIG_LIKE_EXTS or p.name == ".env" or p.name.endswith(".env.example")
+        pattern = GENERIC_ASSIGNMENT_RE if is_config_like else SOURCE_LITERAL_RE
+        for lineno, line in enumerate(content.splitlines(), start=1):
+            if SECRET_SCAN_IGNORE_MARKER in line:
+                continue
+            if AWS_KEY_RE.search(line):
+                problems.append(f"{rel}:{lineno}: looks like an AWS access key ID")
+            m = pattern.match(line)
+            if not m:
+                continue
+            value = m.group(2).strip()
+            env_ref = ENV_VAR_REF_RE.match(value)
+            if env_ref:
+                default = env_ref.group("default")
+                if not default or default in KNOWN_SAFE_VALUES:
+                    continue
+                value = default  # fall through to the same checks against the default
+            if (
+                value in KNOWN_SAFE_VALUES
+                or "local_only" in value.lower()
+                or PLACEHOLDER_RE.match(value)
+                or value.startswith("REPLACE_ME")
+            ):
+                continue
+            if rel in (".env.example",) or rel.startswith("config/") and rel.endswith(".example.yaml"):
+                # example files intentionally show the *shape*; already screened above
+                continue
+            problems.append(f"{rel}:{lineno}: possible committed secret in {m.group(1)!r}-named field")
+    return problems
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("config_file", nargs="?", help="Path to a config YAML file")
+    parser.add_argument("--strict", action="store_true")
+    parser.add_argument("--scan-secrets", action="store_true")
+    args = parser.parse_args()
+
+    if args.scan_secrets:
+        problems = scan_secrets()
+        if problems:
+            print("Secret scan FAILED:")
+            for p in problems:
+                print(f"  - {p}")
+            return 1
+        print("Secret scan OK — no committed secret values found in tracked files.")
+        if not args.config_file:
+            return 0
+
+    if not args.config_file:
+        parser.error("config_file is required unless --scan-secrets is the only action")
+
+    path = Path(args.config_file)
+    errors = validate_file(path, strict=args.strict)
+    if errors:
+        print(f"INVALID: {path}")
+        for e in errors:
+            print(f"  - {e}")
+        return 1
+
+    print(f"VALID: {path}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

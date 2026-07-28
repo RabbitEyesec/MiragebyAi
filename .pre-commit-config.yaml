@@ -1,0 +1,50 @@
+# Task #17. Not spec-mandated (the spec only says "CI validates golden
+# fixtures for current + previous versions" — see .github/workflows/ci.yml
+# for that), but a fast local safety net catching the same lint/secret
+# issues before they ever reach CI. `pip install -e ".[dev]"` already
+# installs pre-commit; run `pre-commit install` once to activate the git
+# hook.
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+        args: ["--allow-multiple-documents"]
+      - id: check-json
+      - id: check-added-large-files
+        args: ["--maxkb=2048"]
+      - id: check-merge-conflict
+      - id: mixed-line-ending
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.6.9
+    hooks:
+      - id: ruff
+        args: ["--fix"]
+
+  # Local hooks (not third-party repos) — reuse the exact same project
+  # tooling `make ci` runs, so pre-commit and CI can never silently
+  # disagree about what "passing" means.
+  - repo: local
+    hooks:
+      - id: mypy
+        name: mypy
+        entry: .venv/bin/mypy libs services agents
+        language: system
+        pass_filenames: false
+        files: ^(libs|services|agents)/.*\.py$
+
+      - id: scan-secrets
+        name: scan-secrets (scripts/validate-config --scan-secrets)
+        entry: .venv/bin/python scripts/validate-config --scan-secrets
+        language: system
+        pass_filenames: false
+
+      - id: validate-contracts
+        name: validate-contracts (schema drift + breaking-change check)
+        entry: .venv/bin/python scripts/validate-contracts
+        language: system
+        pass_filenames: false
+        files: ^schemas/.*\.json$|^contracts/.*$

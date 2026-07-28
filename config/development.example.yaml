@@ -1,0 +1,123 @@
+# Mirage configuration — development
+#
+# Copy to config/development.yaml (gitignored) and adjust if needed.
+# Development runs entirely against local Docker Compose services (see
+# infra/compose/docker-compose.yml). Credentials here are non-secret, fixed,
+# local-only development defaults — never used outside a developer's own
+# machine and never valid against any real AWS/Elastic/Postgres deployment.
+#
+# Validate with: scripts/validate-config config/development.yaml
+
+environment: development
+
+logging:
+  level: DEBUG
+  redact_secrets: true
+
+observability:
+  otel_endpoint: "http://localhost:4318"
+  otel_service_namespace: mirage
+
+aws:
+  # Development does not touch AWS. Placeholders only — scripts/validate-config
+  # allows this exact placeholder pair for environment=development.
+  account_id: "REPLACE_ME_AWS_ACCOUNT_ID"
+  region: "us-east-1"
+
+network:
+  vpc_cidr: "10.42.0.0/16"
+  subnets:
+    public_edge: "10.42.0.0/22"
+    control: "10.42.4.0/22"
+    endpoint: "10.42.8.0/22"
+    sandbox: "10.42.12.0/22"
+    attacker: "10.42.16.0/22"
+
+domains:
+  primary_domain: "mirage.localtest.me"
+  canary_callback_domain: "canary.mirage.localtest.me"
+  tls_certificate_ref: "local-dev-self-signed"
+
+postgres:
+  host: "localhost"
+  port: 5432
+  database: "mirage"
+  credentials_source: env
+  # MIRAGE_POSTGRES_USER / MIRAGE_POSTGRES_PASSWORD in .env — see .env.example
+
+nats:
+  url: "nats://localhost:4222"
+  credentials_source: env
+
+elasticsearch:
+  url: "http://localhost:9200"
+  credentials_source: env
+
+keycloak:
+  issuer_url: "http://localhost:8081/realms/mirage"
+  realm: "mirage"
+  client_id: "mirage-dashboard"
+  bootstrap_admin_source: env
+
+step_ca:
+  url: "https://localhost:9000"
+  provisioner_name: "mirage-enrollment"
+  root_fingerprint_source: env
+
+ai_provider:
+  secret_name: "mirage/development/ai-provider"
+  timeout_seconds: 10
+  max_concurrent_requests: 4
+  max_input_tokens: 4000
+  max_output_tokens: 1000
+  daily_budget_gbp: 10
+  monthly_budget_gbp: 100
+  max_retries: 2
+  retry_base_seconds: 0.25
+  circuit_breaker_failures: 3
+  circuit_breaker_reset_seconds: 60
+  usage_alert_percent: 80
+  allow_external_provider: false
+  model_allowlist: ["deterministic-fake"]
+  max_requests_per_case: 100
+
+kms:
+  # Development has no real KMS key; report-worker/evidence signing in dev
+  # runs against a local test key and is marked LAB_VERIFICATION_REQUIRED for
+  # anything claiming a real KMS-signed manifest.
+  signing_key_ref: "LOCAL_DEV_NO_KMS"
+
+evidence:
+  bucket_name: "mirage-evidence"
+  region: "us-east-1"
+  object_lock_mode: GOVERNANCE
+  retention_days: 7
+  multipart_threshold_mb: 8
+  max_retries: 3
+  request_timeout_seconds: 10
+  endpoint_url: "http://localhost:9002"
+
+artifact_scanner:
+  max_upload_mb: 250
+  max_archive_depth: 3
+  max_archive_members: 1000
+  max_expanded_mb: 500
+  max_compression_ratio: 100
+  per_member_max_mb: 250
+  scan_timeout_seconds: 120
+  clamav_timeout_seconds: 60
+  yara_timeout_seconds: 30
+  oletools_timeout_seconds: 30
+  yara_rules_path: "config/yara/mirage-base-v1.yar"
+
+fleet:
+  fleet_server_url: "https://localhost:8220"
+  enrollment_token_source: env
+
+installer_signing:
+  certificate_ref: "LOCAL_DEV_UNSIGNED"
+
+canary:
+  callback_base_url: "http://localhost:8090"
+  signing_secret_name: "mirage/development/canary-signing"
+  rate_limit_per_five_minutes: 1000

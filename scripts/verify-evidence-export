@@ -1,0 +1,40 @@
+#!/usr/bin/env python3
+"""Independently verify a Mirage evidence export package."""
+from __future__ import annotations
+
+import argparse
+from pathlib import Path
+
+from mirage_common.evidence_export import verify_export_package
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("package", type=Path)
+    parser.add_argument(
+        "--public-key",
+        type=Path,
+        help="offline KMS public key PEM to trust explicitly; overrides the trust store",
+    )
+    parser.add_argument(
+        "--trust-store",
+        type=Path,
+        help="directory of trusted public keys (default: $MIRAGE_TRUST_STORE_DIR or "
+        "/etc/mirage/trust/release-keys); the export's own embedded key is never "
+        "trusted on its own",
+    )
+    args = parser.parse_args()
+    public_key = args.public_key.read_bytes() if args.public_key else None
+    report = verify_export_package(
+        args.package, public_key_pem=public_key, trust_store_dir=args.trust_store
+    )
+    print(f"valid={str(report.valid).lower()}")
+    if report.manifest_sha256:
+        print(f"manifest_sha256={report.manifest_sha256}")
+    for error in report.errors:
+        print(f"ERROR: {error}")
+    return 0 if report.valid else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

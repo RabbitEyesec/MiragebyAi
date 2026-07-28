@@ -1,0 +1,54 @@
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+  hostmetrics:
+    collection_interval: 15s
+    scrapers:
+      cpu: {}
+      memory: {}
+      filesystem: {}
+      network: {}
+
+processors:
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 512
+  batch:
+    send_batch_size: 1024
+    timeout: 5s
+  attributes/drop-sensitive:
+    actions:
+      - {key: password, action: delete}
+      - {key: secret, action: delete}
+      - {key: credential, action: delete}
+      - {key: api_key, action: delete}
+      - {key: prompt, action: delete}
+      - {key: evidence_bytes, action: delete}
+
+exporters:
+  otlphttp/elastic:
+    endpoint: ${env:ELASTIC_APM_OTLP_ENDPOINT}
+    headers:
+      Authorization: ${env:ELASTIC_APM_AUTHORIZATION}
+  prometheus:
+    endpoint: 0.0.0.0:9464
+  debug:
+    verbosity: basic
+
+service:
+  telemetry:
+    logs:
+      level: info
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, attributes/drop-sensitive, batch]
+      exporters: [otlphttp/elastic, debug]
+    metrics:
+      receivers: [otlp, hostmetrics]
+      processors: [memory_limiter, attributes/drop-sensitive, batch]
+      exporters: [prometheus, otlphttp/elastic]

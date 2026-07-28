@@ -1,0 +1,17 @@
+{
+  "index_patterns": ["mirage-telemetry-sandbox*"],
+  "data_stream": {},
+  "composed_of": ["mirage-common-mappings"],
+  "priority": 200,
+  "template": {
+    "settings": {
+      "index.lifecycle.name": "mirage-telemetry-ilm-policy",
+      "index.default_pipeline": "mirage-set-timestamp",
+      "number_of_replicas": 0
+    }
+  },
+  "_meta": {
+    "description": "MirageSpider's envelope-wrapped sandbox telemetry (spider.observation, Step 5) plus, elsewhere, mirage-audit for spider.tamper (routed to the audit stream, not here — see subjects.py and ADR-0015). Appendix E names this 'Spider telemetry, case-tagged'; case-tagging comes from the shared envelope's case_id field (Appendix C), populated once Stage 2's case machinery (Step 6/7) exists — a null case_id is valid and expected before then.",
+    "spec_reference": "Appendix E, Step 5"
+  }
+}

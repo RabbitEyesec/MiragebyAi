@@ -1,0 +1,27 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import argparse
+import json
+from pathlib import Path
+
+from mirage_common.release import verify_release
+
+parser = argparse.ArgumentParser(description="Verify a Mirage release bundle offline.")
+parser.add_argument("package", type=Path)
+parser.add_argument(
+    "--public-key",
+    type=Path,
+    help="externally trusted signer public key PEM; overrides the trust store",
+)
+parser.add_argument(
+    "--trust-store",
+    type=Path,
+    help="directory of trusted public keys (default: $MIRAGE_TRUST_STORE_DIR or "
+    "/etc/mirage/trust/release-keys); the release's own embedded key is never "
+    "trusted on its own",
+)
+args = parser.parse_args()
+result = verify_release(args.package, public_key=args.public_key, trust_store_dir=args.trust_store)
+print(json.dumps(result, indent=2, sort_keys=True))
+raise SystemExit(0 if result["valid"] else 1)

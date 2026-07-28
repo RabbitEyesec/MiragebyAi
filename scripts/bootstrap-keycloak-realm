@@ -1,0 +1,67 @@
+#!/usr/bin/env python3
+"""Idempotently create the "mirage" Keycloak realm, its five RBAC roles
+(Step 4b), an OIDC client, and one dev test user per role. Thin CLI wrapper
+around libs/mirage_common/keycloak_admin — the same library also backs
+tests/integration/conftest.py's ephemeral Keycloak fixture. Development
+only; see that module's docstring.
+"""
+from __future__ import annotations
+
+import os
+import sys
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO_ROOT / "libs"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from _lib import (  # noqa: E402
+    DEV_AUTH_CREDENTIALS_PATH,
+    get_or_create_dev_user_password,
+    load_env_file,
+)
+from mirage_common.keycloak_admin import ROLES, bootstrap_realm  # noqa: E402
+
+# Must run before the os.environ.get defaults below are evaluated: compose
+# starts Keycloak with .env's admin password, and this host-side script has no
+# other way to learn it once that password is per-machine rather than the
+# published example literal.
+load_env_file()
+
+KEYCLOAK_URL = os.environ.get("MIRAGE_KEYCLOAK_URL", "http://localhost:8081")
+ADMIN_USER = os.environ.get("MIRAGE_KEYCLOAK_ADMIN_USER", "admin")
+# The Keycloak server's own bootstrap admin login — sourced from .env via
+# docker-compose's KEYCLOAK_ADMIN_PASSWORD (see infra/compose/docker-compose.development.yml);
+# the literal default here only matches .env.example's documented example
+# value and is never the credential actually used once a real .env exists.
+ADMIN_PASSWORD = os.environ.get("MIRAGE_KEYCLOAK_ADMIN_PASSWORD", "mirage_dev_local_only")
+DASHBOARD_URL = os.environ.get("MIRAGE_DASHBOARD_URL", "http://localhost:3001")
+IS_PRODUCTION = os.environ.get("MIRAGE_ENV") == "production"
+
+
+def main() -> int:
+    dev_user_password = None if IS_PRODUCTION else get_or_create_dev_user_password()
+    bootstrap_realm(
+        KEYCLOAK_URL,
+        admin_user=ADMIN_USER,
+        admin_password=ADMIN_PASSWORD,
+        allow_http=KEYCLOAK_URL.startswith("http://"),
+        dashboard_url=DASHBOARD_URL,
+        dev_user_password=dev_user_password or "",
+        create_dev_users=not IS_PRODUCTION,
+    )
+    print(f"Keycloak 'mirage' realm bootstrap complete. Roles: {', '.join(ROLES)}")
+    print(f"Dashboard client redirect/root/base URL: {DASHBOARD_URL}")
+    if IS_PRODUCTION:
+        print("MIRAGE_ENV=production: no dev test users created (Priority 9).")
+    else:
+        print(
+            "Dev users: dev-platform-admin, dev-investigator, dev-operator, "
+            f"dev-auditor, dev-read-only — random per-machine password written to "
+            f"{DEV_AUTH_CREDENTIALS_PATH} (gitignored)"
+        )
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

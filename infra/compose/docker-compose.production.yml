@@ -1,0 +1,431 @@
+# Production Compose — deployed by the Ubuntu server installer
+# (libs/mirage_common/server_installer.py). See
+# docs/runbooks/production-compose.md for the full operational runbook and
+# docs/runbooks/step-ca-secrets.md for how step-ca is actually initialized.
+#
+# Differences from docker-compose.development.yml (not a copy with a new
+# name — every one of these is a deliberate, individually justified change):
+#   - Every credential is REQUIRED (${VAR:?message}) — no `mirage_dev_local_only`-shaped
+#     fallback exists anywhere in this file. A missing secret fails `docker
+#     compose up` outright rather than silently starting with a known
+#     default.
+#   - No MinIO. Evidence storage requires a real S3-compatible endpoint and
+#     real AWS credentials (or an IAM instance role — see below).
+#   - step-ca receives NO `DOCKER_STEPCA_INIT_*` variables. Those trigger
+#     the official image's auto-init path, which generates a brand-new
+#     throwaway CA on first start — correct for a disposable dev stack,
+#     never correct for a production certificate authority. Production
+#     step-ca must be initialized once, out of band, by a human following
+#     docs/runbooks/step-ca-secrets.md, before this compose file is ever
+#     brought up; this file only mounts the resulting persistent volume.
+#   - Keycloak runs `start` (optimized production mode), not `start-dev`,
+#     with strict hostname/proxy settings — `start-dev` disables several
+#     production safeguards (it exists specifically to make local iteration
+#     easier, which is exactly the wrong trade-off here).
+#   - Application images are referenced by pinned digest
+#     (${MIRAGE_<SERVICE>_IMAGE:?...}), supplied by the release manifest —
+#     never `build:`. A production deploy must never depend on the source
+#     tree being present on the server (see docs/runbooks/release-clean-room.md).
+#   - Every mirage-* application container: read-only root filesystem
+#     (+ a `tmpfs` /tmp), all Linux capabilities dropped, `no-new-privileges`,
+#     and explicit CPU/memory limits. Every image already runs as a
+#     non-root user (see each service's Dockerfile) — this file does not
+#     need to (and does not) override that.
+#   - Named volumes are bind mounts to explicit, documented host paths under
+#     /var/lib/mirage/ rather than anonymous Docker-managed volumes, so an
+#     operator can find, back up, and inventory them without going through
+#     `docker volume inspect`.
+#   - Ports remain bound to 127.0.0.1 only, exactly like development — a
+#     TLS-terminating reverse proxy (the existing Nginx HTTP broker, or an
+#     external load balancer) is expected to sit in front and is out of this
+#     file's scope; this file never binds a management port to 0.0.0.0.
+#
+# scripts/validate-production-compose enforces the "no development-only
+# setting" guard the server installer runs before ever calling `docker
+# compose -f this-file up`.
+
+x-mirage-common-env: &mirage-common-env
+  MIRAGE_ENV: production
+
+x-mirage-app-env: &mirage-app-env
+  MIRAGE_POSTGRES_HOST: postgres
+  MIRAGE_POSTGRES_PORT: "5432"
+  MIRAGE_POSTGRES_USER: ${MIRAGE_POSTGRES_USER:?set in .env — see docs/runbooks/production-compose.md}
+  MIRAGE_POSTGRES_PASSWORD: ${MIRAGE_POSTGRES_PASSWORD:?set in .env — see docs/runbooks/production-compose.md} # secret-scan: ignore (env-var reference, not a literal secret value)
+  MIRAGE_POSTGRES_DB: ${MIRAGE_POSTGRES_DB:?set in .env}
+  MIRAGE_NATS_URL: nats://nats:4222
+  MIRAGE_STEP_CA_URL: https://step-ca:9000
+  MIRAGE_PROXY_SHARED_SECRET: ${MIRAGE_PROXY_SHARED_SECRET:?set in .env — see .env.example} # secret-scan: ignore (env-var reference, not a literal secret value)
+
+x-hardened-app: &hardened-app
+  restart: unless-stopped
+  read_only: true
+  tmpfs:
+    - /tmp
+  cap_drop: ["ALL"]
+  security_opt: ["no-new-privileges:true"]
+  networks: [mirage-control]
+
+name: mirage-production
+
+networks:
+  mirage-control:
+    name: mirage-control-production
+
+volumes:
+  mirage-postgres-data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /var/lib/mirage/postgres
+  mirage-nats-data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /var/lib/mirage/nats
+  mirage-elastic-data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /var/lib/mirage/elasticsearch
+  mirage-keycloak-data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /var/lib/mirage/keycloak
+  mirage-stepca-data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /var/lib/mirage/step-ca
+  mirage-artifact-quarantine:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /var/lib/mirage/artifact-quarantine
+
+services:
+  postgres:
+    image: postgres:16.4
+    container_name: mirage-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${MIRAGE_POSTGRES_USER:?set in .env}
+      POSTGRES_PASSWORD: ${MIRAGE_POSTGRES_PASSWORD:?set in .env} # secret-scan: ignore (env-var reference, not a literal secret value)
+      POSTGRES_DB: ${MIRAGE_POSTGRES_DB:?set in .env}
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - mirage-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    deploy:
+      resources:
+        limits: { cpus: "2.0", memory: 2g }
+    networks: [mirage-control]
+
+  nats:
+    image: nats:2.10-alpine
+    container_name: mirage-nats
+    restart: unless-stopped
+    command:
+      - "-js"
+      - "-sd=/data"
+      - "-m=8222"
+    ports:
+      - "127.0.0.1:4222:4222"
+      - "127.0.0.1:8222:8222"
+    volumes:
+      - mirage-nats-data:/data
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8222/healthz"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    deploy:
+      resources:
+        limits: { cpus: "1.0", memory: 1g }
+    networks: [mirage-control]
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.15.0
+    container_name: mirage-elasticsearch
+    restart: unless-stopped
+    environment:
+      discovery.type: single-node
+      xpack.security.enabled: "true"
+      ELASTIC_PASSWORD: ${MIRAGE_ELASTIC_PASSWORD:?set in .env} # secret-scan: ignore (env-var reference, not a literal secret value)
+      ES_JAVA_OPTS: "-Xms2g -Xmx2g"
+    ports:
+      - "127.0.0.1:9200:9200"
+    volumes:
+      - mirage-elastic-data:/usr/share/elasticsearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf -u elastic:$$ELASTIC_PASSWORD http://localhost:9200/_cluster/health || exit 1"] # secret-scan: ignore (env-var reference, not a literal secret value) gitleaks:allow
+      interval: 10s
+      timeout: 5s
+      retries: 30
+    deploy:
+      resources:
+        limits: { cpus: "2.0", memory: 3g }
+    networks: [mirage-control]
+
+  # Production Keycloak: `start` (optimized), never `start-dev` — see the
+  # file-level comment for why. KC_HOSTNAME must be the real public URL;
+  # there is no localhost fallback.
+  keycloak:
+    image: quay.io/keycloak/keycloak:25.0
+    container_name: mirage-keycloak
+    restart: unless-stopped
+    command: ["start", "--optimized"]
+    environment:
+      KEYCLOAK_ADMIN: ${MIRAGE_KEYCLOAK_ADMIN_USER:?set in .env}
+      KEYCLOAK_ADMIN_PASSWORD: ${MIRAGE_KEYCLOAK_ADMIN_PASSWORD:?set in .env} # secret-scan: ignore (env-var reference, not a literal secret value)
+      KC_HOSTNAME: ${MIRAGE_KEYCLOAK_PUBLIC_URL:?set in .env — the real public HTTPS URL}
+      KC_HOSTNAME_STRICT: "true"
+      KC_PROXY_HEADERS: xforwarded
+      KC_HTTP_ENABLED: "true" # TLS is terminated by the fronting reverse proxy, not Keycloak itself
+    ports:
+      - "127.0.0.1:8081:8080"
+    volumes:
+      - mirage-keycloak-data:/opt/keycloak/data
+    healthcheck:
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/localhost/8080 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+    deploy:
+      resources:
+        limits: { cpus: "1.0", memory: 1g }
+    networks: [mirage-control]
+
+  # No DOCKER_STEPCA_INIT_* vars here — see the file-level comment. This
+  # service only ever serves an already-initialized CA from the mounted
+  # volume; it does not create one.
+  step-ca:
+    image: smallstep/step-ca:0.27.4
+    container_name: mirage-step-ca
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:9000:9000"
+    volumes:
+      - mirage-stepca-data:/home/step
+    healthcheck:
+      test: ["CMD", "step", "ca", "health", "--ca-url=https://localhost:9000", "--root=/home/step/certs/root_ca.crt"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+    deploy:
+      resources:
+        limits: { cpus: "1.0", memory: 512m }
+    networks: [mirage-control]
+
+  # --- Application services --------------------------------------------
+  # Images are pinned digests from the release manifest, never built from
+  # source here (see docs/runbooks/release-clean-room.md).
+
+  mirage-api:
+    <<: *hardened-app
+    image: ${MIRAGE_API_IMAGE:?set to the release manifest's pinned mirage-api image digest}
+    container_name: mirage-api
+    environment:
+      <<: *mirage-app-env
+      MIRAGE_NATS_MONITORING_URL: http://nats:8222/healthz
+      MIRAGE_ELASTICSEARCH_URL: http://elasticsearch:9200
+      MIRAGE_KEYCLOAK_ISSUER_URL: ${MIRAGE_KEYCLOAK_INTERNAL_ISSUER_URL:?set in .env}
+      MIRAGE_AGENT_INGESTION_URL: http://mirage-agent-ingestion:8010
+      MIRAGE_EVIDENCE_BUCKET: ${MIRAGE_EVIDENCE_BUCKET:?set in .env}
+      MIRAGE_EVIDENCE_REGION: ${MIRAGE_EVIDENCE_REGION:?set in .env}
+      MIRAGE_EVIDENCE_ENDPOINT_URL: ${MIRAGE_EVIDENCE_ENDPOINT_URL:?set in .env — a real S3-compatible endpoint, never MinIO}
+      MIRAGE_EVIDENCE_OBJECT_LOCK_MODE: COMPLIANCE
+      MIRAGE_EVIDENCE_RETENTION_DAYS: ${MIRAGE_EVIDENCE_RETENTION_DAYS:?set in .env}
+      MIRAGE_EVIDENCE_MULTIPART_THRESHOLD_MB: "8"
+      MIRAGE_EVIDENCE_MAX_RETRIES: "3"
+      MIRAGE_EVIDENCE_REQUEST_TIMEOUT_SECONDS: "10"
+      MIRAGE_KMS_SIGNING_KEY_ARN: ${MIRAGE_KMS_SIGNING_KEY_ARN:?set in .env — a real KMS key ARN, never LOCAL_DEV_NO_KMS}
+      MIRAGE_CANARY_INGESTION_HMAC: ${MIRAGE_CANARY_INGESTION_HMAC:?set in .env} # secret-scan: ignore (env-var reference, not a literal secret value)
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+    ports:
+      - "127.0.0.1:18000:8000"
+    volumes:
+      - /var/lib/mirage/step-ca-provisioner-keys:/app/infra/step-ca/dev-provisioner-keys:ro
+      - mirage-artifact-quarantine:/tmp/mirage-artifact-quarantine
+    depends_on:
+      postgres: { condition: service_healthy }
+      nats: { condition: service_healthy }
+      elasticsearch: { condition: service_healthy }
+      keycloak: { condition: service_healthy }
+      step-ca: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/openapi.json', timeout=3)\""]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    deploy:
+      resources:
+        limits: { cpus: "1.0", memory: 512m }
+
+  mirage-dashboard:
+    <<: *hardened-app
+    image: ${MIRAGE_DASHBOARD_IMAGE:?set to the release manifest's pinned dashboard image digest}
+    container_name: mirage-dashboard
+    environment:
+      MIRAGE_OIDC_ISSUER_URL: ${MIRAGE_KEYCLOAK_PUBLIC_URL:?set in .env}/realms/mirage
+      MIRAGE_OIDC_INTERNAL_ISSUER_URL: ${MIRAGE_KEYCLOAK_INTERNAL_ISSUER_URL:?set in .env}/realms/mirage
+      MIRAGE_OIDC_CLIENT_ID: mirage-dashboard
+      MIRAGE_OIDC_CLIENT_SECRET: ${MIRAGE_OIDC_CLIENT_SECRET:?set in .env} # secret-scan: ignore (env-var reference, not a literal secret value)
+      MIRAGE_DASHBOARD_URL: ${MIRAGE_DASHBOARD_PUBLIC_URL:?set in .env — the real public HTTPS URL}
+      MIRAGE_API_URL: http://mirage-api:8000
+      MIRAGE_SESSION_SECRET: ${MIRAGE_SESSION_SECRET:?set in .env — minimum 32 characters} # secret-scan: ignore
+      NODE_ENV: production
+    ports:
+      - "127.0.0.1:3001:3000"
+    depends_on:
+      mirage-api: { condition: service_healthy }
+      keycloak: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/ >/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    deploy:
+      resources:
+        limits: { cpus: "1.0", memory: 512m }
+
+  mirage-agent-ingestion:
+    <<: *hardened-app
+    image: ${MIRAGE_AGENT_INGESTION_IMAGE:?set to the release manifest's pinned image digest}
+    container_name: mirage-agent-ingestion
+    environment:
+      <<: *mirage-app-env
+    ports:
+      - "127.0.0.1:8010:8010"
+    volumes:
+      - /var/lib/mirage/step-ca-provisioner-keys:/app/infra/step-ca/dev-provisioner-keys:ro
+    depends_on:
+      postgres: { condition: service_healthy }
+      nats: { condition: service_healthy }
+      step-ca: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8010/health', timeout=3)\""]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    deploy:
+      resources:
+        limits: { cpus: "1.0", memory: 512m }
+
+  mirage-sandbox-gateway:
+    <<: *hardened-app
+    image: ${MIRAGE_SANDBOX_GATEWAY_IMAGE:?set to the release manifest's pinned image digest}
+    container_name: mirage-sandbox-gateway
+    environment:
+      <<: *mirage-app-env
+      MIRAGE_KEYCLOAK_ISSUER_URL: ${MIRAGE_KEYCLOAK_INTERNAL_ISSUER_URL:?set in .env}
+    ports:
+      - "127.0.0.1:8020:8020"
+    depends_on:
+      postgres: { condition: service_healthy }
+      nats: { condition: service_healthy }
+      keycloak: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8020/health', timeout=3)\""]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    deploy:
+      resources:
+        limits: { cpus: "1.0", memory: 512m }
+
+  mirage-worker:
+    <<: *hardened-app
+    image: ${MIRAGE_WORKER_IMAGE:?set to the release manifest's pinned image digest}
+    container_name: mirage-worker
+    environment:
+      <<: *mirage-app-env
+    depends_on:
+      postgres: { condition: service_healthy }
+      nats: { condition: service_healthy }
+    deploy:
+      resources:
+        limits: { cpus: "1.0", memory: 512m }
+
+  mirage-artifact-scanner:
+    <<: *hardened-app
+    image: ${MIRAGE_ARTIFACT_SCANNER_IMAGE:?set to the release manifest's pinned image digest}
+    container_name: mirage-artifact-scanner
+    environment:
+      <<: *mirage-app-env
+      ARTIFACT_MAX_UPLOAD_MB: "250"
+      ARTIFACT_MAX_ARCHIVE_DEPTH: "3"
+      ARTIFACT_MAX_ARCHIVE_MEMBERS: "1000"
+      ARTIFACT_MAX_EXPANDED_MB: "500"
+      ARTIFACT_MAX_COMPRESSION_RATIO: "100"
+      ARTIFACT_MAX_MEMBER_MB: "250"
+      ARTIFACT_SCAN_TIMEOUT_SECONDS: "120"
+      ARTIFACT_CLAMAV_TIMEOUT_SECONDS: "60"
+      ARTIFACT_YARA_TIMEOUT_SECONDS: "30"
+      ARTIFACT_OLETOOLS_TIMEOUT_SECONDS: "30"
+      ARTIFACT_YARA_RULES_PATH: /app/config/yara/mirage-base-v1.yar
+    volumes:
+      - mirage-artifact-quarantine:/tmp/mirage-artifact-quarantine
+      - /var/lib/mirage/yara-rules:/app/config/yara:ro
+    depends_on:
+      postgres: { condition: service_healthy }
+    deploy:
+      resources:
+        limits: { cpus: "1.0", memory: 1g }
+
+  mirage-report-worker:
+    <<: *hardened-app
+    image: ${MIRAGE_REPORT_WORKER_IMAGE:?set to the release manifest's pinned image digest}
+    container_name: mirage-report-worker
+    environment:
+      <<: *mirage-app-env
+      MIRAGE_EVIDENCE_BUCKET: ${MIRAGE_EVIDENCE_BUCKET:?set in .env}
+      MIRAGE_EVIDENCE_REGION: ${MIRAGE_EVIDENCE_REGION:?set in .env}
+      MIRAGE_EVIDENCE_ENDPOINT_URL: ${MIRAGE_EVIDENCE_ENDPOINT_URL:?set in .env}
+      MIRAGE_EVIDENCE_OBJECT_LOCK_MODE: COMPLIANCE
+      MIRAGE_EVIDENCE_RETENTION_DAYS: ${MIRAGE_EVIDENCE_RETENTION_DAYS:?set in .env}
+      MIRAGE_EVIDENCE_MULTIPART_THRESHOLD_MB: "8"
+      MIRAGE_EVIDENCE_MAX_RETRIES: "3"
+      MIRAGE_EVIDENCE_REQUEST_TIMEOUT_SECONDS: "10"
+      MIRAGE_KMS_SIGNING_KEY_ARN: ${MIRAGE_KMS_SIGNING_KEY_ARN:?set in .env}
+      MIRAGE_EXPORT_SIGNER: ${MIRAGE_EXPORT_SIGNER:?set in .env — a real KMS-backed signer identifier, never LOCAL_DEVELOPMENT}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+    depends_on:
+      postgres: { condition: service_healthy }
+    deploy:
+      resources:
+        limits: { cpus: "1.0", memory: 512m }
+
+  mirage-outbox-relay:
+    <<: *hardened-app
+    image: ${MIRAGE_OUTBOX_RELAY_IMAGE:?set to the release manifest's pinned image digest}
+    container_name: mirage-outbox-relay
+    environment:
+      <<: *mirage-app-env
+    depends_on:
+      postgres: { condition: service_healthy }
+      nats: { condition: service_healthy }
+    deploy:
+      resources:
+        limits: { cpus: "0.5", memory: 256m }
+
+# NOTE: the Nginx HTTP broker (infra/broker/http) and OpenSSH bastion
+# (infra/broker/ssh) are provisioned by their own compose files, exactly as
+# in development — see docker-compose.yml's equivalent note. A production
+# deployment also needs a hardened, real-TLS variant of those; that is
+# tracked as separate follow-on work, not silently assumed to be covered by
+# this file.

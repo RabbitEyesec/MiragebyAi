@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mirage.local/schemas/events/policy.decision.v1.schema.json",
+  "title": "PolicyDecisionV1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["decision_id", "case_id", "decision", "reason_codes", "policy_version"],
+  "properties": {
+    "decision_id": {"type": "string", "pattern": "^[0-7][0-9A-HJKMNP-TV-Z]{25}$"},
+    "case_id": {"type": "string", "pattern": "^[0-7][0-9A-HJKMNP-TV-Z]{25}$"},
+    "proposal_id": {"type": ["string", "null"], "pattern": "^[0-7][0-9A-HJKMNP-TV-Z]{25}$"},
+    "decision": {"enum": ["ALLOW", "DENY", "REQUIRE_ANALYST_APPROVAL", "DEFER", "FALLBACK"]},
+    "reason_codes": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+    "policy_version": {"type": "string", "minLength": 1, "maxLength": 32}
+  }
+}

@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  MirageEndpoint hardened bundle: chains three installs behind one
+  end-to-end progress UI — Sysmon + approved config, Elastic Agent bootstrap
+  enrollment, and the MirageEndpoint MSI (Product.wxs) itself. WiX v5 Burn.
+
+  LAB_VERIFICATION_REQUIRED — same as Product.wxs. The Sysmon and
+  Elastic Agent installers themselves are third-party MSI/EXE payloads not
+  vendored into this repo; `build.ps1` downloads/stages them from the
+  approved internal binary mirror before `wix build` runs.
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:bal="http://wixtoolset.org/schemas/v4/wxs/bal">
+
+  <Bundle Name="Mirage Endpoint — Full Install"
+          Version="!(bind.packageVersion.MirageEndpointMsi)"
+          Manufacturer="Mirage"
+          UpgradeCode="7C3F2C3B-7D3F-4A2C-9D2D-0A1B2C3D4E10">
+
+    <BootstrapperApplication>
+      <bal:WixStandardBootstrapperApplication LicenseUrl="" />
+    </BootstrapperApplication>
+
+    <Chain>
+      <!-- 1. Sysmon + the approved Mirage Sysmon configuration. Sysmon
+           itself ships as sysmon64.exe (Sysinternals, not MSI); installed
+           via ExePackage with the approved config XML applied via -c. -->
+      <ExePackage Id="SysmonInstall"
+                  SourceFile="payloads\Sysmon64.exe"
+                  InstallCommand="-accepteula -i &quot;[SysmonConfigPath]&quot;"
+                  UninstallCommand="-u force"
+                  Permanent="no"
+                  Vital="yes" />
+
+      <!-- 2. Protected bootstrap reads a one-time token from a SYSTEM-only
+           named pipe/protected file, passes it to Elastic Agent over stdin,
+           invalidates it after enrolment, and emits bounded result JSON.
+           The token is never a Burn variable or process argument. -->
+      <ExePackage Id="ElasticAgentProtectedBootstrap"
+                  SourceFile="payloads\MirageFleetBootstrap.exe"
+                  InstallCommand="install --protected-input"
+                  UninstallCommand="uninstall"
+                  Permanent="no"
+                  Vital="yes" />
+
+      <!-- 3. MirageEndpoint itself (Product.wxs). -->
+      <MsiPackage Id="MirageEndpointMsi" SourceFile="bin\MirageEndpoint.msi" Vital="yes" />
+    </Chain>
+  </Bundle>
+</Wix>

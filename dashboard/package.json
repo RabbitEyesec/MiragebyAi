@@ -1,0 +1,47 @@
+{
+  "name": "mirage-dashboard",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev -p 3001",
+    "build": "next build",
+    "start": "next start",
+    "lint": "oxlint --deny-warnings app components features hooks lib middleware.ts next.config.ts tests",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:component": "vitest run tests/components.test.tsx",
+    "test:graph-2d": "vitest run tests/graph-2d.test.ts",
+    "test:graph-3d": "vitest run tests/graph-3d.test.ts",
+    "test:graph-parity": "vitest run tests/graph-parity.test.ts",
+    "test:e2e": "playwright test"
+  },
+  "dependencies": {
+    "@mirage/contracts": "file:../contracts/typescript",
+    "cytoscape": "3.33.1",
+    "jose": "6.0.11",
+    "next": "15.5.22",
+    "react": "19.1.0",
+    "react-dom": "19.1.0",
+    "three": "0.178.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.62.0",
+    "@testing-library/jest-dom": "6.6.4",
+    "@testing-library/react": "16.3.0",
+    "@types/cytoscape": "3.21.9",
+    "@types/node": "24.0.15",
+    "@types/react": "19.1.8",
+    "@types/react-dom": "19.1.6",
+    "@types/three": "0.178.1",
+    "@vitejs/plugin-react": "4.7.0",
+    "jsdom": "26.1.0",
+    "oxlint": "1.75.0",
+    "typescript": "5.8.3",
+    "vite": "7.3.6",
+    "vitest": "3.2.7"
+  },
+  "overrides": {
+    "postcss": "8.5.18",
+    "sharp": "0.35.0"
+  }
+}

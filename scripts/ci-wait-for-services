@@ -1,0 +1,123 @@
+#!/usr/bin/env python3
+"""Block until the compose stack is genuinely up, then exit 0 — or print why
+it is not and exit 1.
+
+Usage:
+    scripts/ci-wait-for-services                    # every service in the file
+    scripts/ci-wait-for-services step-ca keycloak   # just these
+
+A service counts as good when either:
+  * it declares a healthcheck and reports "healthy"; or
+  * it declares none and is "running"; or
+  * it is a one-shot job (minio-init, which the compose file waits on with
+    service_completed_successfully) that has exited 0.
+
+Anything else — unhealthy, still starting past the deadline, exited non-zero,
+or absent from `ps` entirely — is a failure. CI's previous inline loop shelled
+out to `docker compose ps` WITHOUT --all, so a service that had already
+crashed was simply missing from the listing and the loop cheerfully reported
+"all services healthy". Missing is now checked explicitly, against the set of
+services the compose file actually declares.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import subprocess
+import sys
+import time
+
+COMPOSE_FILE = os.environ.get("MIRAGE_COMPOSE_FILE", "infra/compose/docker-compose.development.yml")
+ENV_FILE = os.environ.get("MIRAGE_ENV_FILE", ".env")
+
+
+def _compose(*args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["docker", "compose", "--env-file", ENV_FILE, "-f", COMPOSE_FILE, *args],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+def _declared_services() -> list[str]:
+    result = _compose("config", "--services")
+    if result.returncode != 0:
+        print(f"could not read compose services:\n{result.stderr}", file=sys.stderr)
+        raise SystemExit(1)
+    return sorted({line.strip() for line in result.stdout.splitlines() if line.strip()})
+
+
+def _snapshot() -> list[dict]:
+    """`docker compose ps --format json` emits either one JSON array or a
+    stream of newline-delimited objects depending on the version; accept both."""
+    result = _compose("ps", "--all", "--format", "json")
+    if result.returncode != 0:
+        return []
+    text = result.stdout.strip()
+    if not text:
+        return []
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        return [json.loads(line) for line in text.splitlines() if line.strip()]
+    return parsed if isinstance(parsed, list) else [parsed]
+
+
+def _problem(entry: dict) -> str | None:
+    health = (entry.get("Health") or "").strip()
+    state = (entry.get("State") or "").strip()
+    exit_code = entry.get("ExitCode")
+    if health:
+        if health != "healthy":
+            return f"state={state} health={health}"
+        return None
+    if state == "running":
+        return None
+    if state == "exited" and exit_code == 0:
+        return None  # completed one-shot job
+    return f"state={state} health=- exit={exit_code}"
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("services", nargs="*", help="services to wait for (default: all)")
+    parser.add_argument("--attempts", type=int, default=int(os.environ.get("MIRAGE_HEALTH_ATTEMPTS", "60")))
+    parser.add_argument("--interval", type=float, default=float(os.environ.get("MIRAGE_HEALTH_INTERVAL", "5")))
+    args = parser.parse_args()
+
+    expected = sorted(set(args.services)) if args.services else _declared_services()
+
+    problems: dict[str, str] = {}
+    missing: list[str] = []
+    for _ in range(args.attempts):
+        snapshot = [entry for entry in _snapshot() if entry.get("Service") in expected]
+        seen = {entry.get("Service") for entry in snapshot}
+
+        problems = {}
+        for entry in snapshot:
+            detail = _problem(entry)
+            if detail:
+                problems[str(entry.get("Service"))] = detail
+        missing = [name for name in expected if name not in seen]
+
+        if not problems and not missing:
+            print("all requested services healthy/running:")
+            for name in expected:
+                print(f"  {name}")
+            return 0
+        time.sleep(args.interval)
+
+    print(f"timed out after {args.attempts * args.interval:.0f}s waiting for services:", file=sys.stderr)
+    for name, detail in sorted(problems.items()):
+        print(f"  {name}: {detail}", file=sys.stderr)
+    for name in missing:
+        print(f"  {name}: not created", file=sys.stderr)
+    print(file=sys.stderr)
+    print(_compose("ps", "--all").stdout, file=sys.stderr)
+    return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

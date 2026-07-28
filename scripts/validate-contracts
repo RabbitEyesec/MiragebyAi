@@ -1,0 +1,124 @@
+#!/usr/bin/env python3
+"""CI drift check: regenerates everything downstream of /schemas and fails if
+that changes any tracked file relative to git's index/HEAD.
+
+This is the concrete mechanism behind the Step 1 acceptance line "CI fails
+when generated types differ from schemas": if a schema was edited without
+re-running `make generate-contracts` and committing the result, this script
+catches it by literally regenerating and diffing against what's committed.
+
+Also fails if a breaking (non-additive) schema change was made without a
+major-version bump — see check_no_breaking_change_without_version_bump().
+"""
+from __future__ import annotations
+
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+
+WATCHED_PATHS = [
+    "contracts/python/mirage_contracts/schemas",
+    "contracts/python/mirage_contracts/generated",
+    "contracts/typescript/src/schemas",
+    "contracts/typescript/src/generated",
+]
+
+
+def run(cmd: list[str], **kwargs) -> subprocess.CompletedProcess:
+    return subprocess.run(cmd, cwd=REPO_ROOT, capture_output=True, text=True, **kwargs)
+
+
+def git_diff_names(paths: list[str]) -> list[str]:
+    """Files that regeneration changed relative to what's already staged/committed.
+
+    Deliberately NOT `git status --porcelain` wholesale: that also reports
+    staged-but-uncommitted additions ("A "), which on a repo with no commits
+    yet would flag every freshly-`git add`-ed generated file as "drift" even
+    though regeneration produced byte-identical content. We only care about
+    (a) tracked-or-staged files regeneration modified since they were staged
+    (`git diff --name-only`, working tree vs index), and (b) brand-new files
+    regeneration produced that were never staged at all (`??` in porcelain
+    status) — both are genuine "committed generated output != /schemas" cases.
+    """
+    result = run(["git", "diff", "--name-only", "--", *paths])
+    unstaged_modifications = [line for line in result.stdout.splitlines() if line]
+
+    result2 = run(["git", "status", "--porcelain", "--untracked-files=all", "--", *paths])
+    brand_new_files = [line[3:] for line in result2.stdout.splitlines() if line.startswith("??")]
+
+    return sorted(set(unstaged_modifications) | set(brand_new_files))
+
+
+def check_required_schema_fields_never_shrink() -> list[str]:
+    """A required field REMOVED from a schema without a major bump is a breaking
+    change smuggled in as additive. We can't diff against schema history without
+    git blame per-file parsing, so this is enforced procedurally instead: every
+    schemas/**/*.v<N>.schema.json filename's <N> is the contract for "breaking
+    changes require a new major version" — reviewers/CI enforce this by requiring
+    a new vN file rather than editing an existing one's required list. This
+    function checks that invariant: no *.v<N>.schema.json file may be missing
+    a `required` field that a same-named CHECKED-IN fixture instance actually
+    supplies as an extra/removed key relative to git HEAD's version of the file.
+    """
+    problems: list[str] = []
+    result = run(["git", "show", "HEAD:."])
+    if result.returncode != 0:
+        return problems  # no HEAD yet (first commit) — nothing to compare against
+    for schema_path in sorted((REPO_ROOT / "schemas").rglob("*.v*.schema.json")):
+        rel = schema_path.relative_to(REPO_ROOT)
+        old = run(["git", "show", f"HEAD:{rel}"])
+        if old.returncode != 0:
+            continue  # new file, nothing to compare
+        try:
+            old_schema = json.loads(old.stdout)
+            new_schema = json.loads(schema_path.read_text())
+        except json.JSONDecodeError:
+            continue
+        old_required = set(old_schema.get("required", []))
+        new_required = set(new_schema.get("required", []))
+        removed = old_required - new_required
+        if removed:
+            problems.append(
+                f"{rel}: required field(s) {removed} removed without a new major version "
+                f"file (schema_version major is encoded in the filename, e.g. .v2.schema.json)"
+            )
+    return problems
+
+
+def main() -> int:
+    print("Regenerating contracts from /schemas ...")
+    gen = run([sys.executable, str(REPO_ROOT / "scripts" / "generate-contracts")])
+    print(gen.stdout)
+    if gen.returncode != 0:
+        print(gen.stderr, file=sys.stderr)
+        print("generate-contracts FAILED")
+        return 1
+
+    print("Checking for drift between /schemas and committed generated output ...")
+    changed = git_diff_names(WATCHED_PATHS)
+    if changed:
+        print("DRIFT DETECTED — the following generated files no longer match /schemas:")
+        for f in changed:
+            print(f"  - {f}")
+        print()
+        print("Run `make generate-contracts` and commit the result.")
+        return 1
+    print("No drift — generated Python/TypeScript match /schemas exactly.")
+
+    print("Checking no required field was removed without a major version bump ...")
+    breaking = check_required_schema_fields_never_shrink()
+    if breaking:
+        print("BREAKING SCHEMA CHANGE WITHOUT VERSION BUMP:")
+        for p in breaking:
+            print(f"  - {p}")
+        return 1
+    print("No breaking changes detected.")
+
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -1,0 +1,122 @@
+# Mirage configuration — production
+#
+# Release 1 of Mirage is a controlled lab/cyber-range product; "production"
+# here means a persistently-run instance of that lab (e.g. a shared team
+# range), not a customer-facing SaaS. Same rules as acceptance.example.yaml:
+# every REPLACE_ME_* is a placeholder, this file is not valid strict input
+# until replaced, and it is LAB_VERIFICATION_REQUIRED end to end.
+
+environment: production
+
+logging:
+  level: WARNING
+  redact_secrets: true
+
+observability:
+  otel_endpoint: "REPLACE_ME_OTEL_COLLECTOR_URL"
+  otel_service_namespace: mirage
+
+aws:
+  account_id: "REPLACE_ME_AWS_ACCOUNT_ID"
+  region: "us-east-1"
+
+network:
+  vpc_cidr: "10.60.0.0/16"
+  subnets:
+    public_edge: "10.60.0.0/22"
+    control: "10.60.4.0/22"
+    endpoint: "10.60.8.0/22"
+    sandbox: "10.60.12.0/22"
+    attacker: "10.60.16.0/22"
+
+domains:
+  primary_domain: "REPLACE_ME_PRODUCTION_DOMAIN"
+  canary_callback_domain: "REPLACE_ME_CANARY_DOMAIN"
+  tls_certificate_ref: "REPLACE_ME_ACM_CERTIFICATE_ARN"
+
+postgres:
+  host: "REPLACE_ME_RDS_OR_EC2_HOST"
+  port: 5432
+  database: "mirage"
+  credentials_source: secrets_manager
+  secret_name: "mirage/production/postgres"
+
+nats:
+  url: "REPLACE_ME_NATS_URL"
+  credentials_source: secrets_manager
+  secret_name: "mirage/production/nats"
+
+elasticsearch:
+  url: "REPLACE_ME_ELASTICSEARCH_URL"
+  credentials_source: secrets_manager
+  secret_name: "mirage/production/elastic"
+
+keycloak:
+  issuer_url: "REPLACE_ME_KEYCLOAK_ISSUER_URL"
+  realm: "mirage"
+  client_id: "mirage-dashboard"
+  bootstrap_admin_source: secrets_manager
+  secret_name: "mirage/production/keycloak"
+
+step_ca:
+  url: "REPLACE_ME_STEP_CA_URL"
+  provisioner_name: "mirage-enrollment"
+  root_fingerprint_source: secrets_manager
+  secret_name: "mirage/production/step-ca"
+
+ai_provider:
+  secret_name: "mirage/production/ai-provider"
+  timeout_seconds: 10
+  max_concurrent_requests: 8
+  max_input_tokens: 4000
+  max_output_tokens: 1000
+  daily_budget_gbp: 50
+  monthly_budget_gbp: 500
+  max_retries: 2
+  retry_base_seconds: 0.25
+  circuit_breaker_failures: 3
+  circuit_breaker_reset_seconds: 60
+  usage_alert_percent: 80
+  allow_external_provider: false
+  model_allowlist: ["REPLACE_ME_APPROVED_MODEL"]
+  max_requests_per_case: 100
+
+kms:
+  signing_key_ref: "REPLACE_ME_KMS_KEY_ARN"
+
+evidence:
+  bucket_name: "REPLACE_ME_EVIDENCE_BUCKET_NAME"
+  region: "us-east-1"
+  object_lock_mode: COMPLIANCE
+  retention_days: 365
+  multipart_threshold_mb: 8
+  max_retries: 3
+  request_timeout_seconds: 10
+  rfc3161_authority_url: "REPLACE_ME_RFC3161_AUTHORITY_URL"
+  rfc3161_ca_file: "REPLACE_ME_RFC3161_CA_FILE"
+
+artifact_scanner:
+  max_upload_mb: 250
+  max_archive_depth: 3
+  max_archive_members: 1000
+  max_expanded_mb: 500
+  max_compression_ratio: 100
+  per_member_max_mb: 250
+  scan_timeout_seconds: 120
+  clamav_timeout_seconds: 60
+  yara_timeout_seconds: 30
+  oletools_timeout_seconds: 30
+  yara_rules_path: "config/yara/mirage-base-v1.yar"
+
+fleet:
+  fleet_server_url: "REPLACE_ME_FLEET_SERVER_URL"
+  enrollment_token_source: secrets_manager
+  secret_name: "mirage/production/fleet"
+
+installer_signing:
+  certificate_ref: "REPLACE_ME_CODE_SIGNING_CERT_ARN"
+
+canary:
+  callback_base_url: "REPLACE_ME_CANARY_API_GATEWAY_URL"
+  signing_secret_name: "mirage/production/canary-signing"
+  rate_limit_per_five_minutes: 1000

@@ -1,0 +1,155 @@
+#!/usr/bin/env python3
+"""Queue and wait for a verified final case report/export, blocking on gaps."""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import time
+
+import psycopg
+from psycopg.types.json import Jsonb
+
+from mirage_common.reports import (
+    REPORT_GENERATOR_VERSION,
+    REPORT_SCHEMA_VERSION,
+    REPORT_TEMPLATE_VERSION,
+)
+from mirage_contracts.ulid import generate_ulid
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--case-id", required=True)
+    parser.add_argument("--created-by", required=True)
+    parser.add_argument("--timeout-seconds", type=int, default=900)
+    parser.add_argument("--confirm")
+    args = parser.parse_args()
+    dsn = os.environ.get("MIRAGE_POSTGRES_DSN")
+    build_hash = os.environ.get("MIRAGE_BUILD_HASH")
+    if not dsn:
+        parser.error("MIRAGE_POSTGRES_DSN must be supplied through the environment")
+    if not build_hash or len(build_hash) not in range(40, 65):
+        parser.error("MIRAGE_BUILD_HASH must be a 40..64 character build hash")
+    expected = f"FINALISE {args.case_id}"
+    if args.confirm != expected:
+        parser.error(f"--confirm must equal {expected!r}")
+    report_id = generate_ulid()
+    with psycopg.connect(dsn) as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT
+              count(*) FILTER (WHERE required_for_export),
+              count(*) FILTER (
+                WHERE required_for_export AND verification_status='VERIFIED'
+              )
+            FROM evidence_objects WHERE case_id=%s
+            """,
+            (args.case_id,),
+        )
+        evidence_counts = cur.fetchone()
+        if evidence_counts is None or evidence_counts[0] == 0:
+            raise RuntimeError("case has no required evidence")
+        if evidence_counts[0] != evidence_counts[1]:
+            raise RuntimeError(
+                f"required evidence is not 100% VERIFIED: {evidence_counts[1]}/{evidence_counts[0]}"
+            )
+        cur.execute(
+            """
+            SELECT count(*) FROM evidence_collection_gaps
+            WHERE case_id=%s AND required AND resolved_at IS NULL
+            """,
+            (args.case_id,),
+        )
+        gap_row = cur.fetchone()
+        if gap_row is None or gap_row[0]:
+            raise RuntimeError(f"unresolved required evidence gaps: {gap_row[0] if gap_row else 'unknown'}")
+        cur.execute(
+            """
+            SELECT report_id FROM case_reports
+            WHERE case_id=%s AND status='COMPLETED'
+              AND verification_status='VERIFIED'
+            ORDER BY completed_at DESC LIMIT 1
+            """,
+            (args.case_id,),
+        )
+        existing = cur.fetchone()
+        if existing:
+            report_id = existing[0]
+        else:
+            cur.execute(
+                """
+                SELECT COALESCE(max(projection_version),0)
+                FROM dashboard_case_summary WHERE case_id=%s
+                """,
+                (args.case_id,),
+            )
+            projection_row = cur.fetchone()
+            projection_version = projection_row[0] if projection_row else 0
+            cur.execute(
+                """
+                INSERT INTO case_reports (
+                    report_id,case_id,idempotency_key,export_mode,
+                    selected_evidence_ids,template_version,report_schema_version,
+                    generator_version,build_hash,source_projection_version,
+                    status,progress,created_by
+                ) VALUES (
+                    %s,%s,%s,'COMPLETE_CASE',%s,%s,%s,%s,%s,%s,
+                    'QUEUED',0,%s
+                )
+                """,
+                (
+                    report_id,
+                    args.case_id,
+                    f"final-teardown:{args.case_id}",
+                    Jsonb([]),
+                    REPORT_TEMPLATE_VERSION,
+                    REPORT_SCHEMA_VERSION,
+                    REPORT_GENERATOR_VERSION,
+                    build_hash,
+                    projection_version,
+                    args.created_by,
+                ),
+            )
+            conn.commit()
+    deadline = time.monotonic() + max(1, min(args.timeout_seconds, 1800))
+    last: dict[str, object] = {}
+    while time.monotonic() < deadline:
+        with psycopg.connect(dsn) as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT r.status,r.verification_status,r.error,r.export_id,
+                       e.verification_status
+                FROM case_reports r
+                LEFT JOIN evidence_exports e ON e.export_id=r.export_id
+                WHERE r.report_id=%s
+                """,
+                (report_id,),
+            )
+            row = cur.fetchone()
+            if row is None:
+                raise RuntimeError("final report disappeared")
+            last = dict(
+                zip(
+                    ("report_status", "report_verification", "error", "export_id", "export_verification"),
+                    row,
+                    strict=True,
+                )
+            )
+        if last["report_status"] == "COMPLETED":
+            passed = (
+                last["report_verification"] == "VERIFIED"
+                and last["export_verification"] == "VERIFIED"
+            )
+            print(json.dumps({"report_id": report_id, "result": "PASS" if passed else "BLOCKED", **last}, indent=2))
+            return 0 if passed else 1
+        if last["report_status"] in {"FAILED", "CANCELLED"}:
+            print(json.dumps({"report_id": report_id, "result": "BLOCKED", **last}, indent=2))
+            return 1
+        time.sleep(0.5)
+    print(json.dumps({"report_id": report_id, "result": "BLOCKED", "reason": "timeout", **last}, indent=2))
+    return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

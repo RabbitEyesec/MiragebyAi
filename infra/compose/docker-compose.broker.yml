@@ -1,0 +1,99 @@
+# Step 8b/8c: the HTTP and SSH brokers, plus minimal "employee" (ENDPOINT)
+# and "sandbox" (SANDBOX) stand-in targets so a real routing decision has
+# two REAL, DIFFERENT backends to choose between. RDP (Step 8d) has no
+# local broker here — see infra/broker/rdp's README and KNOWN_ISSUES.md /
+# ADR-0020 for why.
+#
+# The SSH broker's two backends are self-contained in THIS file (not the
+# Step 7b dev-sandbox target) — the bastion authenticates onward to them
+# with its OWN key (Appendix H.2), which is simplest to provision when both
+# backends are created together with that key already known, rather than
+# coordinating a shared trust root across two independently-startable
+# compose files. The HTTP broker DOES reuse Step 7b's real
+# `dev-sandbox-http` target (HTTP has no equivalent key-provisioning
+# concern) via the external mirage-sandbox-dev network.
+
+name: mirage-dev-broker
+
+networks:
+  mirage-control:
+    external: true
+    name: mirage-control-dev
+  mirage-sandbox:
+    external: true
+    name: mirage-sandbox-dev
+  mirage-endpoint:
+    name: mirage-endpoint-dev
+
+services:
+  employee-http:
+    image: nginx:1.27-alpine
+    container_name: mirage-employee-http
+    restart: unless-stopped
+    networks: [mirage-endpoint]
+
+  http-broker:
+    image: nginx:1.27-alpine
+    container_name: mirage-http-broker
+    restart: unless-stopped
+    environment:
+      MIRAGE_API_URL: http://mirage-api:8000
+      MIRAGE_BROKER_CERT_SERIAL: ${MIRAGE_HTTP_BROKER_CERT_SERIAL:?enroll a BROKER_CLIENT agent and set its certificate_serial here}
+      MIRAGE_BROKER_PROXY_SECRET: ${MIRAGE_API_PROXY_SECRET:?must match mirage-api's own proxy_shared_secret}
+      SANDBOX_UPSTREAM: mirage-dev-sandbox-http:80
+      EMPLOYEE_UPSTREAM: mirage-employee-http:80
+    volumes:
+      - ../broker/http/nginx.conf.template:/etc/nginx/templates/nginx.conf.template:ro
+    command: >
+      sh -c "envsubst '$$MIRAGE_API_URL $$MIRAGE_BROKER_CERT_SERIAL $$MIRAGE_BROKER_PROXY_SECRET $$SANDBOX_UPSTREAM $$EMPLOYEE_UPSTREAM' < /etc/nginx/templates/nginx.conf.template > /etc/nginx/nginx.conf && exec nginx -g 'daemon off;'"
+    ports:
+      - "127.0.0.1:8080:8080"
+    networks: [mirage-control, mirage-sandbox, mirage-endpoint]
+
+  broker-employee-ssh:
+    image: lscr.io/linuxserver/openssh-server:10.3_p1-r0-ls232
+    container_name: mirage-broker-employee-ssh
+    restart: unless-stopped
+    environment:
+      PUBLIC_KEY: ${MIRAGE_BASTION_TO_BACKEND_PUBLIC_KEY:?run scripts/bootstrap-broker-keys and add the printed lines to .env}
+      USER_NAME: employee01
+      PASSWORD_ACCESS: "false"
+      PUID: "1000"
+      PGID: "1000"
+    networks: [mirage-endpoint]
+
+  broker-sandbox-ssh:
+    image: lscr.io/linuxserver/openssh-server:10.3_p1-r0-ls232
+    container_name: mirage-broker-sandbox-ssh
+    restart: unless-stopped
+    environment:
+      PUBLIC_KEY: ${MIRAGE_BASTION_TO_BACKEND_PUBLIC_KEY:?run scripts/bootstrap-broker-keys and add the printed lines to .env}
+      USER_NAME: employee01
+      PASSWORD_ACCESS: "false"
+      PUID: "1000"
+      PGID: "1000"
+    networks: [mirage-sandbox]
+
+  ssh-bastion:
+    image: lscr.io/linuxserver/openssh-server:10.3_p1-r0-ls232
+    container_name: mirage-ssh-bastion
+    restart: unless-stopped
+    environment:
+      PUBLIC_KEY: ${MIRAGE_CLIENT_TO_BASTION_PUBLIC_KEY:?run scripts/bootstrap-broker-keys and add the printed lines to .env}
+      USER_NAME: employee01
+      PASSWORD_ACCESS: "false"
+      PUID: "1000"
+      PGID: "1000"
+      MIRAGE_API_URL: http://mirage-api:8000
+      MIRAGE_BROKER_CERT_SERIAL: ${MIRAGE_SSH_BROKER_CERT_SERIAL:?enroll a BROKER_CLIENT agent and set its certificate_serial here}
+      MIRAGE_BROKER_PROXY_SECRET: ${MIRAGE_API_PROXY_SECRET:?must match mirage-api's own proxy_shared_secret}
+      MIRAGE_SANDBOX_SSH_HOST: mirage-broker-sandbox-ssh
+      MIRAGE_SANDBOX_SSH_PORT: "2222"
+      MIRAGE_EMPLOYEE_SSH_HOST: mirage-broker-employee-ssh
+      MIRAGE_EMPLOYEE_SSH_PORT: "2222"
+    volumes:
+      - ../broker/ssh/mirage-route-selector.sh:/custom-cont-init.d/00-install-selector.sh:ro
+      - ../../.broker-keys/bastion_backend_key:/config/.ssh/bastion_backend_key:ro
+    ports:
+      - "127.0.0.1:2223:2222"
+    networks: [mirage-control, mirage-sandbox, mirage-endpoint]

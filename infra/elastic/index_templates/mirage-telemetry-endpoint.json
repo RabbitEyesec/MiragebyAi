@@ -1,0 +1,17 @@
+{
+  "index_patterns": ["mirage-telemetry-endpoint*"],
+  "data_stream": {},
+  "composed_of": ["mirage-common-mappings"],
+  "priority": 200,
+  "template": {
+    "settings": {
+      "index.lifecycle.name": "mirage-telemetry-ilm-policy",
+      "index.default_pipeline": "mirage-set-timestamp",
+      "number_of_replicas": 0
+    }
+  },
+  "_meta": {
+    "description": "MirageEndpoint's own envelope-wrapped events (heartbeat, health — Step 4). Raw Sysmon/Windows OS telemetry itself arrives via a SEPARATE path (Elastic Agent -> Fleet -> Elasticsearch's standard `logs-windows.sysmon_operational-*` integration data stream, ECS-mapped by Elastic's own integration package, not by this template) — see infra/elastic/README.md for how the two are correlated at query time by source_id/hostname. Appendix E names one conceptual stream; the two locked ingestion paths in §5's topology table produce it as two physical data streams under the hood. @timestamp (required by every ES data stream, and NOT configurable to a different field name in ES 8.15 — verified empirically) is populated from ingest_time by the mirage-set-timestamp ingest pipeline rather than added to the Step 1 envelope contract.",
+    "spec_reference": "Appendix E, Step 4"
+  }
+}

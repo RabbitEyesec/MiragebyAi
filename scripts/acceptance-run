@@ -1,0 +1,6 @@
+#!/usr/bin/env python3
+"""Run bounded local acceptance; Profile B cannot be synthesised by this command."""
+from mirage_common.acceptance import cli
+
+if __name__ == "__main__":
+    raise SystemExit(cli())

@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Priority 5 (RDP steering). Targets net48: the RD Gateway plugin surface
+    (ITSGatewayPlugin / the Terminal Services Gateway Plugin COM type
+    library) is a legacy Windows Server COM interface, registered via
+    TSGatewayPluginConfig — realistically consumed from .NET Framework via
+    COM interop, not modern .NET. This project cannot be restored or built
+    in this development environment (no .NET SDK, no Windows, no access to
+    the actual Terminal Services Gateway Plugin type library to add as a
+    COM reference) — see docs/architecture/rdp-steering.md. The portable
+    decision logic (MirageRouteDecisionClient) has no COM dependency at all
+    and is written to be buildable/testable the moment a .NET SDK is
+    available, on any OS; only MirageRdGatewayPlugin.cs needs the actual
+    Windows COM type library reference this project's own comments
+    describe rather than fabricate.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net48</TargetFramework>
+    <RootNamespace>Mirage.RdpSteering</RootNamespace>
+    <AssemblyName>MirageRdpPlugin</AssemblyName>
+    <LangVersion>10.0</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="System.Text.Json" Version="8.0.5" />
+  </ItemGroup>
+
+</Project>

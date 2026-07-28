@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mirage.internal/schemas/api/enroll_request.v1.schema.json",
+  "title": "EnrollRequest",
+  "description": "POST /api/v1/enroll request body (Appendix F, Step 3). One-time token + CSR + host fingerprint + build hash.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["enrollment_token", "role", "csr_pem", "host_fingerprint", "build_hash"],
+  "properties": {
+    "enrollment_token": {"type": "string", "minLength": 16, "maxLength": 4096},
+    "role": {"type": "string", "enum": ["ENDPOINT", "SPIDER", "ENV_CONTROLLER", "BROKER_CLIENT", "INTERNAL_CONTROL"]},
+    "csr_pem": {"type": "string", "minLength": 32, "maxLength": 8192, "pattern": "^-----BEGIN CERTIFICATE REQUEST-----"},
+    "host_fingerprint": {"type": "string", "minLength": 1, "maxLength": 256},
+    "build_hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
+  }
+}

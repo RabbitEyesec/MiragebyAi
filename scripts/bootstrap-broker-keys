@@ -1,0 +1,51 @@
+#!/usr/bin/env python3
+"""Generates the two ed25519 keypairs Step 8b/8c's SSH bastion needs
+(Appendix H.2): one for the external client authenticating TO the bastion,
+one for the bastion authenticating onward TO whichever backend /route
+selects. Idempotent, same pattern as scripts/bootstrap-dev-sandbox-keys.
+"""
+from __future__ import annotations
+
+from pathlib import Path
+
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import ed25519
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+KEYS_DIR = REPO_ROOT / ".broker-keys"  # gitignored
+
+
+def _ensure_keypair(name: str) -> tuple[Path, str]:
+    private_path = KEYS_DIR / name
+    public_path = KEYS_DIR / f"{name}.pub"
+    if not (private_path.exists() and public_path.exists()):
+        key = ed25519.Ed25519PrivateKey.generate()
+        private_bytes = key.private_bytes(
+            serialization.Encoding.PEM, serialization.PrivateFormat.OpenSSH, serialization.NoEncryption()
+        )
+        public_bytes = key.public_key().public_bytes(serialization.Encoding.OpenSSH, serialization.PublicFormat.OpenSSH)
+        private_path.write_bytes(private_bytes)
+        private_path.chmod(0o600)
+        public_path.write_bytes(public_bytes + b"\n")
+    return private_path, public_path.read_text().strip()
+
+
+def main() -> int:
+    KEYS_DIR.mkdir(parents=True, exist_ok=True)
+
+    client_priv, client_pub = _ensure_keypair("client_to_bastion_key")
+    backend_priv, backend_pub = _ensure_keypair("bastion_backend_key")
+
+    print(f"Keys generated/reused at {KEYS_DIR}")
+    print()
+    print("Add to .env:")
+    print(f'MIRAGE_CLIENT_TO_BASTION_PUBLIC_KEY="{client_pub}"')
+    print(f'MIRAGE_BASTION_TO_BACKEND_PUBLIC_KEY="{backend_pub}"')
+    print()
+    print()
+    print(f"Connect through the bastion: ssh -i {client_priv} -p 2223 employee01@localhost")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

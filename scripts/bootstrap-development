@@ -1,0 +1,170 @@
+#!/usr/bin/env python3
+"""Bring up a working local development stack.
+
+Idempotent: safe to run repeatedly. See docs/runbooks/bootstrap.md for the
+full step-by-step and what each stage does.
+"""
+from __future__ import annotations
+
+import shutil
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _lib import REPO_ROOT, dim, green, print_header, red, run, yellow  # noqa: E402
+
+ENV_FILE = REPO_ROOT / ".env"
+ENV_EXAMPLE = REPO_ROOT / ".env.example"
+DEV_CONFIG = REPO_ROOT / "config" / "development.yaml"
+DEV_CONFIG_EXAMPLE = REPO_ROOT / "config" / "development.example.yaml"
+COMPOSE_FILE = REPO_ROOT / "infra" / "compose" / "docker-compose.development.yml"
+
+
+def ensure_local_files() -> bool:
+    ok = True
+    if not ENV_FILE.exists():
+        if ENV_EXAMPLE.exists():
+            # Generated, NOT copied. .env.example is a public template, so its
+            # `mirage_dev_local_only` literals are published values — copying
+            # them verbatim gave every clone on every machine the same Postgres,
+            # Keycloak, step-ca, MinIO and session credentials. Each secret-
+            # bearing variable gets fresh per-machine randomness instead;
+            # everything else is carried through from the template unchanged.
+            code, out = run(
+                [sys.executable, str(REPO_ROOT / "scripts" / "rotate-dev-credentials")],
+                timeout=30,
+            )
+            if code != 0:
+                print(red(f"could not generate .env: {out}"))
+                ok = False
+            else:
+                print(f"{green('created')} .env from .env.example with per-machine secrets")
+        else:
+            print(red(".env.example missing — cannot bootstrap"))
+            ok = False
+    else:
+        print(f"{dim('exists')} .env")
+        code, out = run(
+            [sys.executable, str(REPO_ROOT / "scripts" / "rotate-dev-credentials"), "--check"],
+            timeout=30,
+        )
+        if code != 0:
+            print(yellow(out.strip()))
+
+    if not DEV_CONFIG.exists():
+        if DEV_CONFIG_EXAMPLE.exists():
+            shutil.copy(DEV_CONFIG_EXAMPLE, DEV_CONFIG)
+            print(f"{green('created')} config/development.yaml from example")
+        else:
+            print(red("config/development.example.yaml missing — cannot bootstrap"))
+            ok = False
+    else:
+        print(f"{dim('exists')} config/development.yaml")
+    return ok
+
+
+def validate_config() -> bool:
+    code, out = run(
+        [sys.executable, str(REPO_ROOT / "scripts" / "validate-config"), str(DEV_CONFIG)],
+        timeout=15,
+    )
+    print(out)
+    return code == 0
+
+
+def compose_up() -> bool:
+    if not COMPOSE_FILE.exists():
+        print(red(f"missing {COMPOSE_FILE}"))
+        return False
+    print("Starting infra + application containers...")
+    # --env-file is required here: Compose's default .env lookup is relative
+    # to the FIRST -f file's directory (infra/compose/), not cwd — even
+    # though this subprocess itself runs with cwd=REPO_ROOT, Compose would
+    # silently look in infra/compose/.env (which doesn't exist) without
+    # this flag. Empirically confirmed (Task #17) when a newly-added
+    # REQUIRED compose variable (MIRAGE_PROXY_SHARED_SECRET, no ${VAR:-default}
+    # fallback) surfaced this as a hard error for the first time — every
+    # OTHER variable in this file has a fallback matching .env.example's own
+    # value, which is exactly why this gap was invisible until now.
+    proc = subprocess.run(
+        ["docker", "compose", "--env-file", str(ENV_FILE), "-f", str(COMPOSE_FILE), "up", "-d"],
+        cwd=REPO_ROOT,
+    )
+    return proc.returncode == 0
+
+
+def wait_healthy(timeout_s: int = 180) -> bool:
+    """Containers with no HEALTHCHECK defined (mirage-worker,
+    mirage-outbox-relay — plain background loops, no HTTP endpoint to
+    probe) report an empty health status forever, never "healthy" — those
+    are treated as fine-if-running, not blocked on. Only containers that
+    DO declare a healthcheck must actually reach "healthy"."""
+    print(f"Waiting up to {timeout_s}s for containers to report healthy...")
+    deadline = time.time() + timeout_s
+    while time.time() < deadline:
+        code, out = run(
+            ["docker", "compose", "--env-file", str(ENV_FILE), "-f", str(COMPOSE_FILE), "ps", "--format", "{{.Name}}\t{{.Health}}\t{{.State}}"],
+            timeout=10,
+        )
+        lines = [line for line in out.splitlines() if line.strip()]
+        if lines:
+            rows = [line.split("\t") for line in lines]
+            not_ready = [name for name, health, state in rows if health not in ("healthy", "") or (health == "" and state != "running")]
+            if not not_ready:
+                for name, health, state in rows:
+                    print(f"  {green(health or state)}  {name}")
+                return True
+        time.sleep(3)
+    print(yellow("Timed out waiting for all containers to become healthy — run"))
+    print(yellow(f"  docker compose -f {COMPOSE_FILE} ps"))
+    print(yellow("to see current state."))
+    return False
+
+
+def migrations_and_streams() -> None:
+    # sys.executable, not the script's own shebang (`str(migrate_script)`
+    # invoked directly) — a bare shebang resolves `python3` via PATH, which
+    # is only the project venv if the caller's shell happens to have it
+    # activated. Running THIS script via `.venv/bin/python
+    # scripts/bootstrap-development` (exactly what Task #17's own
+    # verification did) previously still failed here with
+    # ModuleNotFoundError for psycopg/nats — a real, pre-existing gap this
+    # step's Docker/CI verification work surfaced, not new breakage.
+    migrate_script = REPO_ROOT / "scripts" / "migrate"
+    if migrate_script.exists():
+        print_header("Running database migrations")
+        subprocess.run([sys.executable, str(migrate_script), "up"], cwd=REPO_ROOT)
+    else:
+        print(dim("scripts/migrate not present yet (Stage 2 / Step 6) — skipping."))
+
+    streams_script = REPO_ROOT / "scripts" / "provision-nats-streams"
+    if streams_script.exists():
+        print_header("Provisioning NATS JetStream streams")
+        subprocess.run([sys.executable, str(streams_script)], cwd=REPO_ROOT)
+    else:
+        print(dim("scripts/provision-nats-streams not present yet (Stage 0 / Step 1b) — skipping."))
+
+
+def main() -> int:
+    print_header("Mirage — bootstrap development")
+
+    if not ensure_local_files():
+        return 1
+    if not validate_config():
+        print(red("config/development.yaml failed validation — fix and re-run."))
+        return 1
+    if not compose_up():
+        print(red("docker compose up failed"))
+        return 1
+    wait_healthy()
+    migrations_and_streams()
+
+    print()
+    print(green("Development stack is up.") + " Next: make test-integration")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

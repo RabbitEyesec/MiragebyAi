@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mirage.internal/schemas/events/audit.recorded.v1.schema.json",
+  "title": "AuditRecordedPayload",
+  "description": "Payload for event_type=audit.recorded, schema_version major=1. Mirrors audit_events (Appendix B). Every state-changing transaction writes an audit row in the same DB transaction (Step 6); this event is its outbox-published counterpart.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["actor", "actor_type", "action", "target", "outcome", "correlation_id"],
+  "properties": {
+    "actor": {"type": "string", "minLength": 1, "maxLength": 256},
+    "actor_type": {"type": "string", "enum": ["ANALYST", "AI", "SYSTEM", "AGENT"]},
+    "action": {"type": "string", "minLength": 1, "maxLength": 256},
+    "target": {"type": "string", "minLength": 1, "maxLength": 256},
+    "outcome": {"type": "string", "enum": ["SUCCESS", "FAILURE", "DENIED"]},
+    "correlation_id": {"type": "string", "pattern": "^[0-7][0-9A-HJKMNP-TV-Z]{25}$"},
+    "detail": {"type": ["string", "null"], "maxLength": 2048}
+  }
+}

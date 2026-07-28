@@ -1,0 +1,24 @@
+{
+  "name": "@mirage/contracts",
+  "version": "0.1.0",
+  "description": "Mirage shared contracts: event/command envelope types, ULID/timestamp helpers, schema-backed runtime validation. Generated from /schemas — see Makefile target generate-contracts.",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "generate": "node ./scripts/generate-types.mjs",
+    "build": "tsc -p tsconfig.json && rm -rf dist/schemas && cp -r src/schemas dist/schemas",
+    "test": "npm run build && node --test --experimental-strip-types tests/*.test.ts"
+  },
+  "dependencies": {
+    "ajv": "^8.17.1",
+    "ajv-formats": "^3.0.1",
+    "ulid": "^2.3.0"
+  },
+  "devDependencies": {
+    "json-schema-to-typescript": "^15.0.2",
+    "typescript": "^5.6.2",
+    "@types/node": "^22.7.4"
+  }
+}

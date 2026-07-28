@@ -1,0 +1,12 @@
+# MirageEndpoint runtime configuration — installed to
+# C:\ProgramData\Mirage\Endpoint\config.yaml by the MSI. Placeholders below
+# are substituted by build.ps1 from the target environment's
+# config/<environment>.yaml (mirage-endpoint's own values, not secrets — the
+# bootstrap_enrollment_token is a genuine one-time secret and is injected
+# separately, per-machine, at provisioning time, never baked into the MSI
+# itself; see docs/runbooks/secrets.md and KNOWN_ISSUES.md).
+
+control_plane_url: "REPLACE_AT_BUILD_control_plane_url"
+root_ca_path: "C:\\ProgramData\\Mirage\\Endpoint\\certs\\root_ca.crt"
+bootstrap_enrollment_token: "REPLACE_AT_PROVISIONING_TIME"
+log_level: "INFO"

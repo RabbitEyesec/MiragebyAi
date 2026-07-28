@@ -1,0 +1,54 @@
+{
+  "baseline_version": "1.0.0",
+  "scenario": "dev-sandbox-minimal",
+  "target_id": "mirage-dev-sandbox",
+  "checks": {
+    "hostname_domain": {
+      "comparator": "exact",
+      "level": "MUST",
+      "expected": {"hostname": "SANDBOX-DEV01", "domain": "mirage.local"}
+    },
+    "user_profiles_and_sids": {
+      "comparator": "baseline_match",
+      "level": "MUST",
+      "expected": {"profiles": ["mirage.local\\employee01"]}
+    },
+    "installed_software": {
+      "comparator": "required_subset",
+      "level": "MUST",
+      "expected": {
+        "required": ["Sysmon", "Elastic Agent", "MirageSpider", "MirageEnvironmentController"],
+        "ignored_patterns": ["KB[0-9]+", "Microsoft Visual C\\+\\+ .* Redistributable"]
+      }
+    },
+    "file_timestamps": {
+      "comparator": "no_file_predates_date",
+      "level": "MUST",
+      "expected": {"fictional_hire_date": "2026-01-05"}
+    },
+    "processes_services": {
+      "comparator": "allowed_set_forbidden_patterns",
+      "level": "MUST",
+      "expected": {
+        "allowed": ["explorer.exe", "svchost.exe", "MsMpEng.exe", "MirageSpider", "MirageEnvironmentController"],
+        "forbidden_patterns": ["Mirage*", "Spider*"],
+        "note": "MirageSpider/MirageEnvironmentController are the two sanctioned exceptions to the forbidden_patterns rule — they run as their own dedicated service names, not disguised, per Appendix G; the forbidden_patterns check exists to catch anything ELSE Mirage-named leaking into a scenario that should show no visible Mirage branding to an intruder. Step 10's harness owns reconciling this nuance; this baseline only records intent."
+      }
+    },
+    "network": {
+      "comparator": "baseline_match",
+      "level": "MUST",
+      "expected": {"mac_oui": "00:1A:2B", "dns_servers": ["10.0.20.2"], "domain": "mirage.local"}
+    },
+    "uptime": {
+      "comparator": "range",
+      "level": "SHOULD",
+      "expected": {"min_hours": 4, "max_hours": 720}
+    },
+    "decoy_service_banners": {
+      "comparator": "exact",
+      "level": "SHOULD",
+      "expected": {"http_server_header": "Microsoft-IIS/10.0", "ssh_banner": "SSH-2.0-OpenSSH_for_Windows_8.1"}
+    }
+  }
+}

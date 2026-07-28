@@ -1,0 +1,260 @@
+#!/usr/bin/env python3
+"""Hard gate for the Mirage dashboard's local OIDC login path: fails
+(non-zero exit) if the dashboard, Keycloak, or the wiring between them is
+misconfigured. Run this BEFORE testing sign-in by hand, and whenever login
+starts behaving strangely (redirect to the wrong page, "Access denied",
+stuck on the landing page).
+
+This exists because of a real incident: the dashboard's canonical port
+(3001) and Keycloak's registered redirect URI silently drifted apart across
+several manual fixes, producing three different failure modes in sequence
+(wrong-app 404, cookie-prefix rejection, redirect mismatch) before the root
+causes were all found by hand. This script checks all of them at once, with
+a specific, actionable message for each one — see ARCHITECTURE_DECISIONS.md
+for the full incident writeup.
+
+Unlike scripts/doctor (a non-fatal report), this is a gate: exit 0 only if
+every check passes.
+"""
+from __future__ import annotations
+
+import json
+import os
+import sys
+import urllib.error
+import urllib.request
+from pathlib import Path
+from urllib.parse import parse_qs, urlparse
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _lib import (  # noqa: E402
+    DEV_AUTH_CREDENTIALS_PATH,
+    REPO_ROOT,
+    Result,
+    print_header,
+    print_table,
+)
+
+DASHBOARD_URL = os.environ.get("MIRAGE_DASHBOARD_URL", "http://localhost:3001")
+KEYCLOAK_URL = os.environ.get("MIRAGE_KEYCLOAK_URL", "http://localhost:8081")
+ADMIN_USER = os.environ.get("MIRAGE_KEYCLOAK_ADMIN_USER", "admin")
+ADMIN_PASSWORD = os.environ.get("MIRAGE_KEYCLOAK_ADMIN_PASSWORD", "mirage_dev_local_only")
+REALM = "mirage"
+CLIENT_ID = "mirage-dashboard"
+DEV_USERS = [
+    "dev-platform-admin",
+    "dev-investigator",
+    "dev-operator",
+    "dev-auditor",
+    "dev-read-only",
+]
+
+
+def _get(url: str, headers: dict | None = None, timeout: float = 5.0):
+    req = urllib.request.Request(url, headers=headers or {})
+    return urllib.request.urlopen(req, timeout=timeout)  # noqa: S310
+
+
+def _post_form(url: str, data: dict, timeout: float = 5.0):
+    from urllib.parse import urlencode
+
+    req = urllib.request.Request(
+        url, data=urlencode(data).encode(), headers={"Content-Type": "application/x-www-form-urlencoded"}
+    )
+    return urllib.request.urlopen(req, timeout=timeout)  # noqa: S310
+
+
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *args, **kwargs):
+        return None
+
+
+def check_dashboard_is_mirage() -> Result:
+    """Confirms *something* is actually answering at DASHBOARD_URL, and that
+    it's this project's dashboard rather than an unrelated app that happens
+    to already hold the port (exactly what happened with port 3000 here)."""
+    opener = urllib.request.build_opener(NoRedirect())
+    try:
+        resp = opener.open(f"{DASHBOARD_URL}/api/auth/login", timeout=5.0)
+        location = resp.headers.get("Location", "")
+    except urllib.error.HTTPError as exc:
+        location = exc.headers.get("Location", "") if exc.headers else ""
+    except (urllib.error.URLError, OSError) as exc:
+        return Result(
+            "dashboard reachable",
+            False,
+            f"nothing answering at {DASHBOARD_URL} ({exc}) — start it with "
+            f"`cd dashboard && npm run dev`",
+        )
+    if not location:
+        return Result(
+            "dashboard reachable",
+            False,
+            f"{DASHBOARD_URL}/api/auth/login did not redirect — something is on this "
+            f"port, but it isn't the Mirage dashboard's login route",
+        )
+    if not location.startswith(f"{KEYCLOAK_URL}/realms/{REALM}/"):
+        return Result(
+            "dashboard reachable",
+            False,
+            f"{DASHBOARD_URL} redirected login to {location!r}, not this Keycloak "
+            f"realm — check MIRAGE_OIDC_ISSUER_URL in dashboard/.env.local",
+        )
+    query = parse_qs(urlparse(location).query)
+    redirect_uri = query.get("redirect_uri", [""])[0]
+    if not redirect_uri.startswith(DASHBOARD_URL):
+        return Result(
+            "dashboard reachable",
+            False,
+            f"login redirect_uri is {redirect_uri!r}, not under {DASHBOARD_URL} — "
+            f"MIRAGE_DASHBOARD_URL in dashboard/.env.local does not match the port "
+            f"the dashboard is actually running on",
+        )
+    return Result("dashboard reachable", True, f"{DASHBOARD_URL} is the Mirage dashboard")
+
+
+def get_admin_token() -> tuple[str | None, str]:
+    try:
+        resp = _post_form(
+            f"{KEYCLOAK_URL}/realms/master/protocol/openid-connect/token",
+            {
+                "client_id": "admin-cli",
+                "username": ADMIN_USER,
+                "password": ADMIN_PASSWORD,
+                "grant_type": "password",
+            },
+        )
+        return json.loads(resp.read())["access_token"], ""
+    except (urllib.error.URLError, OSError) as exc:
+        return None, f"cannot reach Keycloak at {KEYCLOAK_URL} ({exc})"
+    except urllib.error.HTTPError as exc:
+        return None, f"Keycloak admin auth failed ({exc.code}) — check MIRAGE_KEYCLOAK_ADMIN_PASSWORD"
+
+
+def check_keycloak_client(token: str) -> Result:
+    req = urllib.request.Request(
+        f"{KEYCLOAK_URL}/admin/realms/{REALM}/clients?clientId={CLIENT_ID}",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    try:
+        clients = json.loads(urllib.request.urlopen(req, timeout=5.0).read())  # noqa: S310
+    except (urllib.error.URLError, OSError, urllib.error.HTTPError) as exc:
+        return Result("keycloak client config", False, f"could not fetch client: {exc}")
+    if not clients:
+        return Result(
+            "keycloak client config", False,
+            f"no '{CLIENT_ID}' client in realm '{REALM}' — run scripts/bootstrap-keycloak-realm",
+        )
+    client = clients[0]
+    expected_redirect = f"{DASHBOARD_URL}/*"
+    problems = []
+    if expected_redirect not in (client.get("redirectUris") or []):
+        problems.append(f"redirectUris missing {expected_redirect!r}: {client.get('redirectUris')}")
+    if DASHBOARD_URL not in (client.get("webOrigins") or []) and "*" not in (client.get("webOrigins") or []):
+        problems.append(f"webOrigins missing {DASHBOARD_URL!r}: {client.get('webOrigins')}")
+    if client.get("rootUrl") != DASHBOARD_URL:
+        problems.append(f"rootUrl is {client.get('rootUrl')!r}, expected {DASHBOARD_URL!r}")
+    if client.get("baseUrl") != DASHBOARD_URL:
+        problems.append(f"baseUrl is {client.get('baseUrl')!r}, expected {DASHBOARD_URL!r}")
+    if problems:
+        return Result(
+            "keycloak client config", False,
+            "; ".join(problems) + " — run scripts/bootstrap-keycloak-realm to fix",
+        )
+    return Result("keycloak client config", True, f"redirectUris/webOrigins/rootUrl/baseUrl all match {DASHBOARD_URL}")
+
+
+def _read_dev_user_password() -> str | None:
+    if not DEV_AUTH_CREDENTIALS_PATH.is_file():
+        return None
+    return json.loads(DEV_AUTH_CREDENTIALS_PATH.read_text()).get("password")
+
+
+def check_dev_credentials_file() -> Result:
+    password = _read_dev_user_password()
+    if password is None:
+        return Result(
+            "dev credentials file", False,
+            f"{DEV_AUTH_CREDENTIALS_PATH} not found — run scripts/bootstrap-keycloak-realm "
+            "to generate a random per-machine dev-user password",
+        )
+    return Result("dev credentials file", True, f"present at {DEV_AUTH_CREDENTIALS_PATH}")
+
+
+def check_dev_users(token: str) -> Result:
+    missing = []
+    for username in DEV_USERS:
+        req = urllib.request.Request(
+            f"{KEYCLOAK_URL}/admin/realms/{REALM}/users?username={username}&exact=true",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        try:
+            users = json.loads(urllib.request.urlopen(req, timeout=5.0).read())  # noqa: S310
+        except (urllib.error.URLError, OSError, urllib.error.HTTPError):
+            users = []
+        if not users:
+            missing.append(username)
+    if missing:
+        return Result(
+            "dev users", False,
+            f"missing: {', '.join(missing)} — run scripts/bootstrap-keycloak-realm",
+        )
+    return Result("dev users", True, f"all {len(DEV_USERS)} present (password in {DEV_AUTH_CREDENTIALS_PATH})")
+
+
+def check_env_local() -> Result:
+    env_local = REPO_ROOT / "dashboard" / ".env.local"
+    if not env_local.exists():
+        return Result(
+            "dashboard/.env.local", False,
+            "missing — copy dashboard/.env.local.example to dashboard/.env.local",
+        )
+    values = {}
+    for line in env_local.read_text().splitlines():
+        if "=" in line and not line.strip().startswith("#"):
+            key, _, value = line.partition("=")
+            values[key.strip()] = value.strip()
+    problems = []
+    if values.get("MIRAGE_DASHBOARD_URL") != DASHBOARD_URL:
+        problems.append(
+            f"MIRAGE_DASHBOARD_URL={values.get('MIRAGE_DASHBOARD_URL')!r}, expected {DASHBOARD_URL!r}"
+        )
+    secret = values.get("MIRAGE_SESSION_SECRET", "")
+    if len(secret) < 32:
+        problems.append(f"MIRAGE_SESSION_SECRET is only {len(secret)} chars, want >= 32")
+    if problems:
+        return Result("dashboard/.env.local", False, "; ".join(problems))
+    return Result("dashboard/.env.local", True, "present and consistent with canonical URL")
+
+
+def main() -> int:
+    print_header("Mirage — dashboard auth doctor")
+    print(f"Canonical dashboard URL: {DASHBOARD_URL}")
+    print(f"Keycloak URL: {KEYCLOAK_URL}")
+
+    results = [check_env_local(), check_dashboard_is_mirage(), check_dev_credentials_file()]
+
+    token, err = get_admin_token()
+    if token is None:
+        results.append(Result("keycloak admin auth", False, err))
+        print_table(results)
+        return 1
+    results.append(Result("keycloak admin auth", True, "authenticated"))
+    results.append(check_keycloak_client(token))
+    results.append(check_dev_users(token))
+
+    ok = print_table(results)
+    print()
+    if ok:
+        password = _read_dev_user_password()
+        print(
+            "All auth checks passed. Sign in at", DASHBOARD_URL,
+            f"with dev-platform-admin / {password} (from {DEV_AUTH_CREDENTIALS_PATH}).",
+        )
+        return 0
+    print("One or more checks failed — fix the FAIL rows above before testing login by hand.")
+    return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

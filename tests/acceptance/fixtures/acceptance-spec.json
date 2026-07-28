@@ -1,0 +1,14 @@
+{
+  "schema_version": "mirage.acceptance/1.0",
+  "numeric_target_ids": [
+    "NUM-01", "NUM-02", "NUM-03", "NUM-04", "NUM-05",
+    "NUM-06", "NUM-07", "NUM-08", "NUM-09", "NUM-10",
+    "NUM-11", "NUM-12", "NUM-13", "NUM-14", "NUM-15",
+    "NUM-16", "NUM-17", "NUM-18", "NUM-19", "NUM-20",
+    "NUM-21", "NUM-22", "NUM-23", "NUM-24", "NUM-25"
+  ],
+  "scenario_step_count": 36,
+  "allowed_results": ["PASS", "FAIL", "NOT_RUN", "BLOCKED"],
+  "profile_b_required_runs": 2,
+  "clean_teardown_and_reprovision_between_runs": true
+}

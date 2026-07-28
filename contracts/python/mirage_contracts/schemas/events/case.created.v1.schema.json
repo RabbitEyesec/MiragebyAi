@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mirage.internal/schemas/events/case.created.v1.schema.json",
+  "title": "CaseCreatedPayload",
+  "description": "Payload for event_type=case.created, schema_version major=1. The immutable first lifecycle event for a case (Step 7 acceptance: exactly one case per correlated incident, first event immutable).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["case_id", "severity", "correlation_key", "source_detection_ids", "initial_state"],
+  "properties": {
+    "case_id": {"type": "string", "pattern": "^[0-7][0-9A-HJKMNP-TV-Z]{25}$"},
+    "severity": {"type": "string", "enum": ["LOW", "MEDIUM", "HIGH", "CRITICAL"]},
+    "correlation_key": {"type": "string", "minLength": 1, "maxLength": 256},
+    "source_detection_ids": {
+      "type": "array",
+      "items": {"type": "string", "pattern": "^[0-7][0-9A-HJKMNP-TV-Z]{25}$"},
+      "minItems": 1,
+      "maxItems": 50
+    },
+    "initial_state": {"const": "CREATED"}
+  }
+}

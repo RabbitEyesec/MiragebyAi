@@ -1,0 +1,50 @@
+#!/usr/bin/env python3
+"""Runs mirage-agent-ingestion (Step 3/4/5: enrolment, heartbeat, telemetry)
+against the real dev stack. Ctrl-C to stop cleanly. Same convention as
+scripts/run-mirage-api. Requires scripts/bootstrap-step-ca-provisioners to
+have already been run (reads the dev provisioner keys it writes)."""
+from __future__ import annotations
+
+import os
+import sys
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO_ROOT / "libs"))
+sys.path.insert(0, str(REPO_ROOT / "services" / "mirage-agent-ingestion"))
+
+import uvicorn  # noqa: E402
+from mirage_agent_ingestion.app import create_app  # noqa: E402
+from mirage_agent_ingestion.enrollment import CaConfig  # noqa: E402
+from mirage_agent_ingestion.provisioners import DevFileProvisionerSource  # noqa: E402
+
+
+def pg_dsn_from_env() -> str:
+    host = os.environ.get("MIRAGE_POSTGRES_HOST", "localhost")
+    port = os.environ.get("MIRAGE_POSTGRES_PORT", "5432")
+    user = os.environ.get("MIRAGE_POSTGRES_USER", "mirage_dev")
+    password = os.environ.get("MIRAGE_POSTGRES_PASSWORD", "mirage_dev_local_only")
+    db = os.environ.get("MIRAGE_POSTGRES_DB", "mirage")
+    return f"host={host} port={port} user={user} password={password} dbname={db}"
+
+
+def main() -> int:
+    keys_dir = Path(os.environ.get("MIRAGE_STEP_CA_KEYS_DIR", str(REPO_ROOT / "infra" / "step-ca" / "dev-provisioner-keys")))
+    ca = CaConfig(
+        ca_url=os.environ.get("MIRAGE_STEP_CA_URL", "https://localhost:9000"),
+        root_cert_path=str(keys_dir / "root_ca.crt"),
+        provisioners=DevFileProvisionerSource(keys_dir=keys_dir),
+    )
+    application = create_app(
+        pg_dsn=pg_dsn_from_env(),
+        ca=ca,
+        proxy_shared_secret=os.environ["MIRAGE_PROXY_SHARED_SECRET"],
+        nats_url=os.environ.get("MIRAGE_NATS_URL", "nats://localhost:4222"),
+    )
+    port = int(os.environ.get("MIRAGE_AGENT_INGESTION_PORT", "8010"))
+    uvicorn.run(application, host="0.0.0.0", port=port, log_level=os.environ.get("MIRAGE_LOG_LEVEL", "info").lower())  # noqa: S104 -- container-internal bind
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -1,0 +1,69 @@
+#!/usr/bin/env python3
+"""Verify that `terraform destroy` left zero Project=mirage resources behind,
+except explicitly configured evidence (Step 2 lab acceptance line).
+
+Exit 0: clean. Exit 1: leftover resources found (printed).
+
+LAB_VERIFICATION_REQUIRED — makes real AWS API calls via scripts/inventory-aws.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--environment", required=True)
+    parser.add_argument("--region", default=None)
+    parser.add_argument("--case-id", default=None)
+    parser.add_argument(
+        "--allow-evidence-bucket",
+        action="store_true",
+        help="Do not flag the evidence S3 bucket / KMS keys as leftover — used when "
+        "verifying teardown of TEMPORARY resources only, with evidence retained by design.",
+    )
+    args = parser.parse_args()
+
+    cmd = [sys.executable, str(REPO_ROOT / "scripts" / "inventory-aws"), "--environment", args.environment, "--json"]
+    if args.case_id:
+        cmd += ["--case-id", args.case_id]
+    if args.region:
+        cmd += ["--region", args.region]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        print(result.stderr, file=sys.stderr)
+        return 1
+
+    resources = json.loads(result.stdout)
+
+    if args.allow_evidence_bucket:
+        resources = [
+            r
+            for r in resources
+            if {
+                tag["Key"]: tag["Value"] for tag in r.get("Tags", [])
+            }.get("EvidenceRetention")
+            != "protected"
+        ]
+
+    if resources:
+        print(f"TEARDOWN INCOMPLETE — {len(resources)} resource(s) still tagged Project=mirage, Environment={args.environment}:")
+        for r in resources:
+            print(f"  - {r['ResourceARN']}")
+        return 1
+
+    scope = f"environment={args.environment}"
+    if args.case_id:
+        scope += f", case_id={args.case_id}"
+    print(f"Teardown verified clean for {scope}: zero disallowed Project=mirage resources remain.")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

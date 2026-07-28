@@ -1,0 +1,7 @@
+# Copy to terraform.tfvars (gitignored). LAB_VERIFICATION_REQUIRED.
+# Also requires: terraform init -backend-config="bucket=<state-bucket>" -backend-config="key=mirage/acceptance/terraform.tfstate" -backend-config="region=<region>"
+
+aws_region           = "us-east-1"
+aws_account_id       = "REPLACE_ME_AWS_ACCOUNT_ID"
+availability_zone    = "us-east-1a"
+allowed_analyst_cidr = "REPLACE_ME_OFFICE_OR_VPN_CIDR"

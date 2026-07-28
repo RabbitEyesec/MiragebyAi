@@ -1,0 +1,161 @@
+#!/usr/bin/env python3
+"""Run two externally orchestrated Profile B cycles with teardown/reprovision between."""
+from __future__ import annotations
+
+import argparse
+import json
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+from mirage_common.acceptance import (
+    NUMERIC_REQUIREMENTS,
+    SCENARIO_STEPS,
+    package_profile_b_result,
+    verify_acceptance_package,
+)
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def validate_completed_run(run_dir: Path) -> dict:
+    errors = []
+    result_path = run_dir / "acceptance-results.json"
+    package = run_dir / "acceptance-package.zip"
+    if not result_path.is_file():
+        errors.append("missing acceptance-results.json")
+        result = {}
+    else:
+        result = json.loads(result_path.read_text())
+    numeric = result.get("numeric_results")
+    scenario = result.get("scenario_results")
+    if result.get("profile") != "PROFILE_B":
+        errors.append("result profile is not PROFILE_B")
+    if result.get("result") != "PASS":
+        errors.append("result is not PASS")
+    expected_ids = {item.requirement_id for item in NUMERIC_REQUIREMENTS}
+    if (
+        not isinstance(numeric, list)
+        or len(numeric) != len(expected_ids)
+        or {item.get("requirement_id") for item in numeric} != expected_ids
+        or any(item.get("result") != "PASS" for item in numeric)
+    ):
+        errors.append("numeric targets are not exactly 25 PASS rows")
+    if (
+        not isinstance(scenario, list)
+        or len(scenario) != len(SCENARIO_STEPS)
+        or [item.get("step") for item in scenario] != list(range(1, 37))
+        or any(item.get("result") != "PASS" for item in scenario)
+    ):
+        errors.append("scenario is not exactly ordered steps 1..36 with PASS")
+    if package.is_file():
+        verification = verify_acceptance_package(package)
+        if not verification["valid"]:
+            errors.extend(
+                f"package verification: {error}" for error in verification["errors"]
+            )
+    else:
+        verification = {"valid": False, "errors": ["missing acceptance-package.zip"]}
+        errors.append("missing acceptance-package.zip")
+    if not errors:
+        try:
+            with tempfile.TemporaryDirectory(prefix="mirage-repeat-validation-") as directory:
+                package_profile_b_result(run_dir, Path(directory))
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            errors.append(f"strict Profile B record validation: {type(exc).__name__}: {exc}")
+    return {
+        "valid": not errors,
+        "errors": errors,
+        "verification": verification,
+    }
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--run-command", required=True, help="Controlled-lab runner executable")
+    parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--confirm", required=True)
+    args = parser.parse_args()
+    if args.confirm != "REPEAT PROFILE_B TWICE":
+        parser.error("--confirm must equal 'REPEAT PROFILE_B TWICE'")
+    args.output.mkdir(parents=True, exist_ok=True)
+    records = []
+    for run_number in (1, 2):
+        run_dir = args.output / f"run-{run_number}"
+        run_dir.mkdir(exist_ok=True)
+        command = [args.run_command, "--profile", "profile-b", "--output", str(run_dir), "--confirm-controlled-lab"]
+        completed = subprocess.run(command, cwd=ROOT, check=False)
+        validation = (
+            validate_completed_run(run_dir)
+            if completed.returncode == 0
+            else {"valid": False, "errors": ["runner returned non-zero"]}
+        )
+        records.append(
+            {
+                "run": run_number,
+                "command": command,
+                "returncode": completed.returncode,
+                "validation": validation,
+            }
+        )
+        if completed.returncode:
+            break
+        if not validation["valid"]:
+            break
+        if run_number == 1:
+            for command_between in (
+                [
+                    sys.executable,
+                    str(ROOT / "scripts" / "acceptance-teardown"),
+                    "--profile",
+                    "profile-b",
+                    "--execute",
+                    "--confirm",
+                    "TEARDOWN profile-b",
+                ],
+                [
+                    sys.executable,
+                    str(ROOT / "scripts" / "acceptance-provision"),
+                    "--profile",
+                    "profile-b",
+                    "--execute",
+                    "--confirm",
+                    "PROVISION profile-b",
+                ],
+            ):
+                completed = subprocess.run(command_between, cwd=ROOT, check=False)
+                records.append({"between_runs": command_between, "returncode": completed.returncode})
+                if completed.returncode:
+                    break
+            if completed.returncode:
+                break
+    passing_runs = [
+        item
+        for item in records
+        if "run" in item
+        and item["returncode"] == 0
+        and item["validation"]["valid"]
+    ]
+    between_steps = [item for item in records if "between_runs" in item]
+    accepted = (
+        len(passing_runs) == 2
+        and len(between_steps) == 2
+        and all(item["returncode"] == 0 for item in between_steps)
+    )
+    summary = {
+        "profile": "PROFILE_B",
+        "required_runs": 2,
+        "clean_teardown_and_reprovision_between_runs": True,
+        "records": records,
+        "accepted": accepted,
+        "product_status": "ACCEPTED" if accepted else "LAB_VERIFICATION_REQUIRED",
+    }
+    (args.output / "repeat-results.json").write_text(
+        json.dumps(summary, indent=2, sort_keys=True) + "\n"
+    )
+    return 0 if accepted else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mirage.internal/schemas/rdp-plugin/config.v1.schema.json",
+  "title": "MirageRdpPluginConfig",
+  "description": "Configuration for the Mirage RD Gateway policy plugin (Priority 5). Loaded once at plugin registration/service start from a mode-0600 JSON file on the Gateway host — never from the registry, never with a secret VALUE inline (see proxy_shared_secret_env_var).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "mirage_api_url", "gateway_listener_id", "client_cert_path", "client_key_path",
+    "root_ca_path", "client_cert_serial", "proxy_shared_secret_env_var",
+    "timeout_ms", "fail_safe_target", "event_log_source"
+  ],
+  "properties": {
+    "mirage_api_url": {
+      "type": "string",
+      "format": "uri",
+      "description": "Base URL of mirage-api, e.g. https://mirage-api.internal:8000 — the plugin calls GET {mirage_api_url}/route."
+    },
+    "gateway_listener_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "description": "Stable identifier for this specific RD Gateway listener, used as the second field of the canonical match_key: RDP|<gateway_listener_id>|<client_ip>|<principal>."
+    },
+    "client_cert_path": {"type": "string", "minLength": 1, "description": "Path to this Gateway's own mTLS client certificate (PEM), issued by step-ca under the BROKER_CLIENT profile."},
+    "client_key_path": {"type": "string", "minLength": 1, "description": "Path to the private key matching client_cert_path. Must be readable only by the service account the plugin runs under."},
+    "root_ca_path": {"type": "string", "minLength": 1, "description": "Path to the trusted step-ca root certificate used to verify mirage-api's TLS certificate."},
+    "client_cert_serial": {
+      "type": "string",
+      "minLength": 1,
+      "description": "This Gateway's own certificate serial, sent as X-Mirage-Client-Cert-Serial — must match client_cert_path's actual serial (validated at plugin startup, not merely trusted)."
+    },
+    "proxy_shared_secret_env_var": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Name of an environment variable (set on the service account, never in this file) holding the X-Mirage-Proxy-Auth shared secret value — this file never contains a secret value itself."
+    },
+    "timeout_ms": {
+      "type": "integer",
+      "minimum": 100,
+      "maximum": 10000,
+      "description": "Per-request timeout calling /route. Appendix H.3's own NLA-compatible flow requires this to resolve well within RD Gateway's own connection-authorization timeout budget."
+    },
+    "fail_safe_target": {
+      "type": "string",
+      "enum": ["ENDPOINT", "DENY"],
+      "description": "What to do when /route is unreachable or times out — ENDPOINT (fail safe to the real employee desktop, matching the HTTP/SSH brokers' own documented fail-safe) or DENY (refuse the connection outright). Never SANDBOX — a broker must never fail open into the observed environment."
+    },
+    "event_log_source": {
+      "type": "string",
+      "minLength": 1,
+      "default": "MirageRdpPlugin",
+      "description": "Windows Event Log source name this plugin registers and logs decision/audit events under (install-mirage-rdp-plugin.ps1 creates it)."
+    }
+  }
+}

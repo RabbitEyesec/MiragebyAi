@@ -1,0 +1,11 @@
+{
+  "description": "Elasticsearch data streams require @timestamp on every document, and (verified empirically against a real 8.15 cluster) the field name is NOT configurable via data_stream.timestamp_field — that setting does not exist in this ES version. Rather than add a non-contract @timestamp field to the Step 1 envelope schema just to satisfy Elasticsearch, this pipeline derives it from the envelope's own ingest_time on the way in.",
+  "processors": [
+    {
+      "set": {
+        "field": "@timestamp",
+        "copy_from": "ingest_time"
+      }
+    }
+  ]
+}

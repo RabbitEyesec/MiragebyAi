@@ -1,0 +1,75 @@
+#!/usr/bin/env python3
+"""Acceptance (AWS, Profile B) bootstrap.
+
+This script does NOT call AWS. In an environment with no AWS account
+configured (the default for this repository's local development), its job is
+to (1) validate config/acceptance.yaml as far as possible without a live
+account, and (2) print the exact ordered list of commands a human runs
+against a real AWS account. It never claims a step succeeded that it did not
+actually perform.
+"""
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _lib import REPO_ROOT, dim, print_header, red, run, which, yellow  # noqa: E402
+
+ACCEPTANCE_CONFIG = REPO_ROOT / "config" / "acceptance.yaml"
+ACCEPTANCE_EXAMPLE = REPO_ROOT / "config" / "acceptance.example.yaml"
+
+LAB_STEPS = [
+    "1. Configure billing alarms at $20 / $50 / $80 (Appendix L) — AWS Console → Billing → Budgets.",
+    "2. aws configure  (or set AWS_PROFILE) with a least-privilege principal for a DEDICATED mirage account.",
+    "3. cd infra/terraform/environments/acceptance && terraform init && terraform plan",
+    "   Review the plan. It must create only Project=mirage tagged resources.",
+    "4. terraform apply   (creates VPC, subnets, security groups, VPC endpoints, IAM roles, KMS key, evidence S3 bucket)",
+    "5. For each secret in docs/runbooks/secrets.md: aws secretsmanager create-secret --name mirage/acceptance/<name> --secret-string '<json>'",
+    "6. Initialize step-ca on the control host using the bootstrap values now stored in mirage/acceptance/step-ca.",
+    "7. Stand up Fleet Server per Elastic's docs; store the enrollment token as mirage/acceptance/fleet.",
+    "8. Replace every REPLACE_ME_* value in config/acceptance.yaml with the real values from steps 3-7.",
+    "9. Re-run: scripts/validate-config config/acceptance.yaml --strict   (must report VALID)",
+    "10. scripts/inventory-aws   to confirm exactly the expected Project=mirage resources exist.",
+]
+
+
+def main() -> int:
+    print_header("Mirage — bootstrap acceptance (AWS, Profile B)")
+
+    if which("aws") is None:
+        print(yellow("aws CLI not installed in this environment."))
+    else:
+        code, _ = run(["aws", "sts", "get-caller-identity"], timeout=5)
+        if code == 0:
+            print(yellow("AWS credentials ARE configured in this shell — but this script"))
+            print(yellow("still will not call AWS. Follow the steps below explicitly."))
+        else:
+            print(dim("No AWS credentials configured (expected in this development environment)."))
+
+    print_header("Config status")
+    if not ACCEPTANCE_CONFIG.exists():
+        print("config/acceptance.yaml does not exist yet. Create it with:")
+        print(f"  cp {ACCEPTANCE_EXAMPLE.relative_to(REPO_ROOT)} {ACCEPTANCE_CONFIG.relative_to(REPO_ROOT)}")
+    else:
+        code, out = run(
+            [sys.executable, str(REPO_ROOT / "scripts" / "validate-config"), str(ACCEPTANCE_CONFIG), "--strict"],
+            timeout=15,
+        )
+        print(out)
+        if code != 0:
+            print(red("config/acceptance.yaml is not yet ready for a real acceptance run."))
+
+    print_header("Required lab steps (LAB_VERIFICATION_REQUIRED — not performed by this script)")
+    for step in LAB_STEPS:
+        print(f"  {step}")
+
+    print()
+    print(red("This script always exits non-zero until every REPLACE_ME_* placeholder"))
+    print(red("in config/acceptance.yaml has been replaced with a real value and"))
+    print(red("`scripts/validate-config config/acceptance.yaml --strict` reports VALID."))
+    return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

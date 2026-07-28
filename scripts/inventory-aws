@@ -1,0 +1,66 @@
+#!/usr/bin/env python3
+"""List every AWS resource tagged Project=mirage in the target account/region.
+
+Used both as a sanity check before `terraform apply` (nothing should exist
+yet) and as the teardown-verification tool (scripts/verify-teardown calls
+this and asserts the result is empty except configured evidence).
+
+Requires AWS credentials with at minimum ReadOnlyAccess (or the
+resourcegroupstaggingapi:GetResources permission specifically) —
+LAB_VERIFICATION_REQUIRED, this script makes real AWS API calls.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import subprocess
+import sys
+
+
+def run_aws(*args: str) -> dict:
+    result = subprocess.run(["aws", *args, "--output", "json"], capture_output=True, text=True)
+    if result.returncode != 0:
+        print(result.stderr, file=sys.stderr)
+        raise SystemExit(1)
+    return json.loads(result.stdout) if result.stdout.strip() else {}
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--region", default=None, help="AWS region (defaults to AWS CLI configured region)")
+    parser.add_argument("--environment", default=None, help="Filter to a specific Environment tag value")
+    parser.add_argument("--case-id", default=None, help="Filter to an exact CaseId tag value")
+    parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON instead of a table")
+    args = parser.parse_args()
+
+    tag_filters = ["Key=Project,Values=mirage"]
+    if args.environment:
+        tag_filters.append(f"Key=Environment,Values={args.environment}")
+    if args.case_id:
+        tag_filters.append(f"Key=CaseId,Values={args.case_id}")
+    cmd = ["resourcegroupstaggingapi", "get-resources", "--tag-filters", *tag_filters]
+    if args.region:
+        cmd += ["--region", args.region]
+
+    data = run_aws(*cmd)
+    resources = data.get("ResourceTagMappingList", [])
+
+    if args.json:
+        print(json.dumps(resources, indent=2))
+        return 0
+
+    if not resources:
+        print("No resources matching the exact Mirage tag filters were found.")
+        return 0
+
+    print(f"{'ARN':<90} Tags")
+    print("-" * 140)
+    for r in resources:
+        tags = {t["Key"]: t["Value"] for t in r.get("Tags", [])}
+        print(f"{r['ResourceARN']:<90} {tags}")
+    print(f"\n{len(resources)} resource(s) tagged Project=mirage.")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

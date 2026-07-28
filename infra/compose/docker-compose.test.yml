@@ -1,0 +1,106 @@
+# Test Compose override — layered on top of docker-compose.development.yml
+# for CI/automated full-stack test runs (e.g. the dashboard's real Keycloak
+# Playwright test, docs/runbooks/dashboard-auth.md), NOT for pytest's own
+# integration suite (tests/integration/*.py spin up their own ephemeral
+# testcontainers directly and never touch this file at all — see
+# tests/integration/conftest.py).
+#
+# This is deliberately an OVERRIDE, not a third full duplicate of the
+# service list: the development file already defines a coherent stack, and
+# copy-pasting it a third time would just be a second place for drift to
+# creep in between what "test" and "development" mean. Standard Docker
+# Compose practice for this exact situation (see the Compose spec's own
+# multi-file merge model) is layering, not duplication:
+#
+#   docker compose \
+#     --env-file .env.test \
+#     -f infra/compose/docker-compose.development.yml \
+#     -f infra/compose/docker-compose.test.yml \
+#     up -d
+#
+# What changes from development, and why:
+#   - `restart: "no"` everywhere — a crashed container should fail the CI
+#     job loudly, not be silently restarted into a flaky-looking retry.
+#   - Named volumes become anonymous `tmpfs` mounts (see the volumes block)
+#     — every run starts from genuinely empty state and nothing persists
+#     between CI runs or leaks disk across them.
+#   - `MIRAGE_ENV: test` — distinguishes this from a real development
+#     session in anything that logs or branches on environment name.
+
+name: mirage-test
+
+x-mirage-common-env: &mirage-common-env
+  MIRAGE_ENV: test
+
+services:
+  # `volumes: !reset []` clears the named-volume mount the base
+  # (development) file declares at the same container path before adding a
+  # tmpfs mount in its place — Compose refuses to mount two things at one
+  # target, and a plain list merge would only ever append, never replace.
+  postgres:
+    restart: "no"
+    volumes: !reset []
+    tmpfs: ["/var/lib/postgresql/data"]
+
+  nats:
+    restart: "no"
+    volumes: !reset []
+    tmpfs: ["/data"]
+
+  elasticsearch:
+    restart: "no"
+    volumes: !reset []
+    tmpfs: ["/usr/share/elasticsearch/data"]
+
+  keycloak:
+    restart: "no"
+    volumes: !reset []
+    tmpfs: ["/opt/keycloak/data"]
+
+  step-ca:
+    restart: "no"
+    volumes: !reset []
+    tmpfs: ["/home/step"]
+
+  minio:
+    restart: "no"
+    volumes: !reset []
+    tmpfs: ["/data"]
+
+  mirage-api:
+    restart: "no"
+    environment:
+      <<: *mirage-common-env
+
+  mirage-dashboard:
+    restart: "no"
+
+  mirage-agent-ingestion:
+    restart: "no"
+    environment:
+      <<: *mirage-common-env
+
+  mirage-sandbox-gateway:
+    restart: "no"
+    environment:
+      <<: *mirage-common-env
+
+  mirage-worker:
+    restart: "no"
+    environment:
+      <<: *mirage-common-env
+
+  mirage-artifact-scanner:
+    restart: "no"
+    environment:
+      <<: *mirage-common-env
+
+  mirage-report-worker:
+    restart: "no"
+    environment:
+      <<: *mirage-common-env
+
+  mirage-outbox-relay:
+    restart: "no"
+    environment:
+      <<: *mirage-common-env

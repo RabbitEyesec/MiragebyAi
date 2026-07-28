@@ -1,0 +1,156 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  MirageEndpoint hardened production MSI. WiX v5 syntax (`wix build`).
+
+  LAB_VERIFICATION_REQUIRED: compiling this requires the WiX Toolset v5 on a
+  Windows build host (ADR-0008) — not available in this development
+  environment. This source is hand-authored to be structurally complete and
+  correct against the WiX v5 schema; scripts/validate-config's XML
+  well-formedness check is the only local verification possible here.
+
+  Authenticode signing is performed by build.ps1 using a protected
+  certificate-store identity. No enrolment material is embedded.
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util"
+     xmlns:firewall="http://wixtoolset.org/schemas/v4/wxs/firewall">
+
+    <Package Name="Mirage Endpoint"
+           Manufacturer="Mirage"
+           Version="!(bind.FileVersion.MirageEndpointExe)"
+           UpgradeCode="6B2E1B2A-6C2E-4F9B-9C2D-9E6A9B1B7A01"
+           Language="1033"
+           Scope="perMachine">
+
+    <SummaryInformation Keywords="Installer,Telemetry,Controlled Lab" Description="Mirage Endpoint hardened installer" />
+
+    <MajorUpgrade DowngradeErrorMessage="A newer version of MirageEndpoint is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <!-- ===================================================================
+         Directories — exact paths per mirage_endpoint/config.py
+         =================================================================== -->
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="MirageVendorFolder" Name="Mirage">
+        <Directory Id="INSTALLFOLDER" Name="Endpoint" />
+      </Directory>
+    </StandardDirectory>
+
+    <StandardDirectory Id="CommonAppDataFolder">
+      <Directory Id="MirageProgramDataVendorFolder" Name="Mirage">
+        <Directory Id="PROGRAMDATA_ENDPOINT" Name="Endpoint">
+          <Directory Id="LOGSFOLDER" Name="Logs" />
+          <Directory Id="QUEUEFOLDER" Name="Queue" />
+          <Directory Id="CERTSFOLDER" Name="certs" />
+        </Directory>
+      </Directory>
+    </StandardDirectory>
+
+    <!-- ===================================================================
+         Feature / components
+         =================================================================== -->
+    <Feature Id="MainFeature" Title="MirageEndpoint" Level="1">
+      <ComponentRef Id="MirageEndpointExeComponent" />
+      <ComponentRef Id="MirageEndpointConfigComponent" />
+      <ComponentRef Id="MirageEndpointServiceComponent" />
+      <ComponentRef Id="MirageEndpointFirewallComponent" />
+      <ComponentRef Id="MirageEndpointRegistryComponent" />
+      <ComponentRef Id="ProgramDataFoldersComponent" />
+    </Feature>
+
+    <!-- The service binary itself: a PyInstaller-frozen executable wrapping
+         mirage_endpoint.win_service (built by installers/endpoint/build.ps1,
+         which also stamps __build_hash__ — see that script). -->
+    <Component Id="MirageEndpointExeComponent" Directory="INSTALLFOLDER" Guid="A1F5C2E1-5B3A-4C2D-8E1F-2A3B4C5D6E01">
+      <File Id="MirageEndpointExe" Name="mirage-endpoint-service.exe" Source="$(var.BuildOutputDir)\mirage-endpoint-service.exe" KeyPath="yes" />
+    </Component>
+
+    <Component Id="MirageEndpointConfigComponent" Directory="PROGRAMDATA_ENDPOINT" Guid="B2A6D3F2-6C4B-4D3E-9F2A-3B4C5D6E7F02">
+      <File Id="ConfigYaml" Name="config.yaml" Source="config\config.yaml.template" KeyPath="yes" />
+      <util:PermissionEx User="NT AUTHORITY\LOCAL SERVICE" GenericRead="yes" GenericWrite="no" />
+    </Component>
+
+    <!-- Empty-but-owned ProgramData subfolders (Logs/Queue/certs) need at
+         least one keypath file or a CreateFolder to be tracked/removed
+         correctly by MSI. -->
+    <Component Id="ProgramDataFoldersComponent" Directory="LOGSFOLDER" Guid="C3B7E4A3-7D5C-4E4F-A03B-4C5D6E7F8A03">
+      <CreateFolder Directory="LOGSFOLDER" />
+      <CreateFolder Directory="QUEUEFOLDER" />
+      <CreateFolder Directory="CERTSFOLDER" />
+      <util:PermissionEx Id="LogsPerm" User="NT AUTHORITY\LOCAL SERVICE" GenericRead="yes" GenericWrite="yes" />
+    </Component>
+
+    <!-- ===================================================================
+         Windows service registration + recovery settings
+         =================================================================== -->
+    <Component Id="MirageEndpointServiceComponent" Directory="INSTALLFOLDER" Guid="D4C8F5B4-8E6D-4F5A-B14C-5D6E7F8A9B04">
+      <File Id="ServiceKeyFile" Name="mirage-endpoint-service.exe" Source="$(var.BuildOutputDir)\mirage-endpoint-service.exe" KeyPath="yes" />
+
+      <ServiceInstall Id="MirageEndpointServiceInstall"
+                      Name="MirageEndpoint"
+                      DisplayName="Mirage Endpoint Telemetry Service"
+                      Description="Streams Sysmon and endpoint telemetry to the Mirage control plane."
+                      Type="ownProcess"
+                      Start="auto"
+                      ErrorControl="normal"
+                      Account="NT AUTHORITY\LocalService">
+        <!-- Recovery: restart on failure — 1st/2nd/subsequent restart delay 5s -->
+        <util:ServiceConfig FirstFailureActionType="restart"
+                             SecondFailureActionType="restart"
+                             ThirdFailureActionType="restart"
+                             RestartServiceDelayInSeconds="5"
+                             ResetPeriodInDays="1" />
+      </ServiceInstall>
+
+      <ServiceControl Id="MirageEndpointServiceControl"
+                       Name="MirageEndpoint"
+                       Start="install"
+                       Stop="both"
+                       Remove="uninstall"
+                       Wait="yes" />
+    </Component>
+
+    <!-- ===================================================================
+         Windows Firewall — outbound only (agent dials the control plane;
+         nothing listens inbound). Explicit allow avoids relying on a
+         permissive default outbound policy being present.
+         =================================================================== -->
+    <Component Id="MirageEndpointFirewallComponent" Directory="INSTALLFOLDER" Guid="E5D9A6C5-9F7E-405B-C25D-6E7F8A9B0C05">
+      <File Id="FirewallMarkerFile" Name="firewall.marker" Source="config\firewall.marker" KeyPath="yes" />
+      <firewall:FirewallException Id="AgentIngestionOutbound"
+                                   Name="MirageEndpoint - Agent Ingestion (mTLS 443)"
+                                   Direction="out"
+                                   Protocol="tcp"
+                                   Port="443"
+                                   Scope="any"
+                                   Profile="all" />
+      <firewall:FirewallException Id="FleetServerOutbound"
+                                   Name="MirageEndpoint - Fleet Server (8220)"
+                                   Direction="out"
+                                   Protocol="tcp"
+                                   Port="8220"
+                                   Scope="any"
+                                   Profile="all" />
+    </Component>
+
+    <!-- ===================================================================
+         Registry keys — per mirage_endpoint/config.py REGISTRY_ROOT.
+         Enrollment state written here at runtime by the service; the MSI
+         only creates the key and sets install metadata.
+         =================================================================== -->
+    <Component Id="MirageEndpointRegistryComponent" Directory="INSTALLFOLDER" Guid="F6EAB7D6-A08F-416C-D36E-7F8A9B0C1D06">
+      <util:EventSource Name="MirageEndpoint"
+                        Log="Application"
+                        EventMessageFile="[INSTALLFOLDER]mirage-endpoint-service.exe"
+                        SupportsErrors="yes"
+                        SupportsInformationals="yes"
+                        SupportsWarnings="yes" />
+      <RegistryKey Root="HKLM" Key="SOFTWARE\Mirage\Endpoint">
+        <RegistryValue Type="string" Name="InstallDir" Value="[INSTALLFOLDER]" KeyPath="yes" />
+        <RegistryValue Type="string" Name="ProgramDataDir" Value="[PROGRAMDATA_ENDPOINT]" />
+        <RegistryValue Type="string" Name="InstalledVersion" Value="!(bind.FileVersion.MirageEndpointExe)" />
+      </RegistryKey>
+    </Component>
+
+  </Package>
+</Wix>

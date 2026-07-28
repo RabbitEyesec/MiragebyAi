@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mirage.internal/schemas/events/agent.heartbeat.v1.schema.json",
+  "title": "AgentHeartbeatPayload",
+  "description": "Payload for event_type=agent.heartbeat, schema_version major=1. Used for GET /api/v1/agents and health rollups (Step 4b). queue_depth was added in 1.1 as an additive, optional field — a 1.0 instance omitting it still validates.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["agent_id", "role", "build_hash", "version", "certificate_serial", "uptime_seconds", "health_state"],
+  "properties": {
+    "agent_id": {"type": "string", "minLength": 1, "maxLength": 256},
+    "role": {"type": "string", "enum": ["ENDPOINT", "SPIDER", "ENV_CONTROLLER"]},
+    "build_hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "version": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"},
+    "certificate_serial": {"type": "string", "minLength": 1, "maxLength": 128},
+    "uptime_seconds": {"type": "integer", "minimum": 0},
+    "health_state": {"type": "string", "enum": ["HEALTHY", "DEGRADED", "UNHEALTHY"]},
+    "queue_depth": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Added in schema_version 1.1 (additive/optional). Local encrypted-queue depth."
+    }
+  }
+}

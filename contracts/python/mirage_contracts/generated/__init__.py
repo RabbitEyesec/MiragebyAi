@@ -1,0 +1,35 @@
+"""Generated Pydantic v2 models — one module per schema file. DO NOT HAND-EDIT.
+Regenerate with: scripts/generate-contracts
+"""
+from mirage_contracts.generated.api_dashboard_read_model_v1 import Model as ApiDashboardReadModelV1
+from mirage_contracts.generated.api_dashboard_realtime_update_v1 import Model as ApiDashboardRealtimeUpdateV1
+from mirage_contracts.generated.api_enroll_request_v1 import Model as ApiEnrollRequestV1
+from mirage_contracts.generated.api_enroll_response_v1 import Model as ApiEnrollResponseV1
+from mirage_contracts.generated.api_error import Model as ApiError
+from mirage_contracts.generated.commands_envelope import Model as CommandsEnvelope
+from mirage_contracts.generated.commands_sandbox_command_v1 import Model as CommandsSandboxCommandV1
+from mirage_contracts.generated.events_agent_certificate_renewed_v1 import Model as EventsAgentCertificateRenewedV1
+from mirage_contracts.generated.events_agent_enrolled_v1 import Model as EventsAgentEnrolledV1
+from mirage_contracts.generated.events_agent_enrollment_failed_v1 import Model as EventsAgentEnrollmentFailedV1
+from mirage_contracts.generated.events_agent_enrollment_revoked_v1 import Model as EventsAgentEnrollmentRevokedV1
+from mirage_contracts.generated.events_agent_heartbeat_v1 import Model as EventsAgentHeartbeatV1
+from mirage_contracts.generated.events_analyst_directive_v1 import Model as EventsAnalystDirectiveV1
+from mirage_contracts.generated.events_audit_recorded_v1 import Model as EventsAuditRecordedV1
+from mirage_contracts.generated.events_canary_callback_v1 import Model as EventsCanaryCallbackV1
+from mirage_contracts.generated.events_case_created_v1 import Model as EventsCaseCreatedV1
+from mirage_contracts.generated.events_case_state_changed_v1 import Model as EventsCaseStateChangedV1
+from mirage_contracts.generated.events_detection_raised_v1 import Model as EventsDetectionRaisedV1
+from mirage_contracts.generated.events_envelope import Model as EventsEnvelope
+from mirage_contracts.generated.events_evidence_created_v1 import Model as EventsEvidenceCreatedV1
+from mirage_contracts.generated.events_evidence_verification_failed_v1 import Model as EventsEvidenceVerificationFailedV1
+from mirage_contracts.generated.events_evidence_verified_v1 import Model as EventsEvidenceVerifiedV1
+from mirage_contracts.generated.events_fingerprint_gate_evaluated_v1 import Model as EventsFingerprintGateEvaluatedV1
+from mirage_contracts.generated.events_policy_decision_v1 import Model as EventsPolicyDecisionV1
+from mirage_contracts.generated.events_sandbox_command_result_v1 import Model as EventsSandboxCommandResultV1
+from mirage_contracts.generated.events_spider_fingerprint_snapshot_v1 import Model as EventsSpiderFingerprintSnapshotV1
+from mirage_contracts.generated.events_spider_observation_v1 import Model as EventsSpiderObservationV1
+from mirage_contracts.generated.events_spider_tamper_v1 import Model as EventsSpiderTamperV1
+from mirage_contracts.generated.events_steering_decision_recorded_v1 import Model as EventsSteeringDecisionRecordedV1
+from mirage_contracts.generated.events_system_health_v1 import Model as EventsSystemHealthV1
+
+__all__ = ["ApiDashboardReadModelV1", "ApiDashboardRealtimeUpdateV1", "ApiEnrollRequestV1", "ApiEnrollResponseV1", "ApiError", "CommandsEnvelope", "CommandsSandboxCommandV1", "EventsAgentCertificateRenewedV1", "EventsAgentEnrolledV1", "EventsAgentEnrollmentFailedV1", "EventsAgentEnrollmentRevokedV1", "EventsAgentHeartbeatV1", "EventsAnalystDirectiveV1", "EventsAuditRecordedV1", "EventsCanaryCallbackV1", "EventsCaseCreatedV1", "EventsCaseStateChangedV1", "EventsDetectionRaisedV1", "EventsEnvelope", "EventsEvidenceCreatedV1", "EventsEvidenceVerificationFailedV1", "EventsEvidenceVerifiedV1", "EventsFingerprintGateEvaluatedV1", "EventsPolicyDecisionV1", "EventsSandboxCommandResultV1", "EventsSpiderFingerprintSnapshotV1", "EventsSpiderObservationV1", "EventsSpiderTamperV1", "EventsSteeringDecisionRecordedV1", "EventsSystemHealthV1"]

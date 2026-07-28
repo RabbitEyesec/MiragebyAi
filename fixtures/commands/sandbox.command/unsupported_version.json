@@ -1,0 +1,14 @@
+{
+  "case_id": "01KYB9FAFRYPA5RKAFR4CGY5GB",
+  "command_id": "01KYB9FAFRGWWSJ1246NSPAYR6",
+  "command_type": "sandbox.command",
+  "expected_state_version": 1,
+  "expires_at": "2026-07-25T23:59:59.000Z",
+  "issued_by": "ANALYST",
+  "params": {
+    "action_type": "TEST_FILE_PLACEMENT"
+  },
+  "policy_decision_id": "01KYB9FAFRR20M13GZCG1J13P6",
+  "sandbox_id": "sandbox-dev-0001",
+  "schema_version": "2.0"
+}

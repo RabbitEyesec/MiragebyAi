@@ -1,0 +1,184 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mirage"
+version = "0.1.0"
+description = "Mirage — controlled cyber-range and deception platform (monorepo, modular monolith + workers)"
+requires-python = "==3.12.*"
+readme = "README.md"
+license = { text = "Proprietary" }
+dependencies = [
+  "fastapi==0.136.3",
+  "starlette==1.3.1",
+  "uvicorn[standard]>=0.30,<0.31",
+  "pydantic>=2.8,<3",
+  "pydantic-settings>=2.4,<3",
+  "pyyaml>=6.0,<7",
+  "jsonschema>=4.23,<5",
+  "python-ulid>=2.7,<3",
+  "httpx>=0.27,<0.28",
+  "psycopg[binary,pool]>=3.2,<4",
+  "nats-py>=2.9,<3",
+  "PyJWT[crypto]>=2.9,<3",
+  "cryptography==48.0.1",
+  "jwcrypto>=1.5,<2",
+  "structlog>=24.4,<25",
+  "python-multipart>=0.0.9",
+  # MirageEnvironmentController's outbound WSS client (Step 9b, Appendix G
+  # "Channel: Outbound WSS -> Sandbox Gateway") — previously only pulled in
+  # transitively via uvicorn[standard]'s own server-side use; declared
+  # explicitly now that agents/mirage-env-controller imports it directly.
+  "websockets>=13,<17",
+  "boto3>=1.34,<2",
+  "opentelemetry-api>=1.27,<2",
+  "opentelemetry-sdk>=1.27,<2",
+  "opentelemetry-exporter-otlp-proto-http>=1.27,<2",
+  "reportlab==4.4.3",
+  "python-docx==1.2.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest==9.0.3",
+  "pytest-asyncio==1.4.0",
+  "pytest-cov==7.1.0",
+  "ruff>=0.6,<0.7",
+  "mypy>=1.11,<2",
+  "types-PyYAML",
+  "types-jsonschema",
+  "datamodel-code-generator>=0.26,<0.27",
+  "pre-commit>=3.8,<4",
+  "testcontainers>=4.8,<5",
+  "python-hcl2>=4.3",
+  "types-jwcrypto",
+  "pip-audit>=2.7,<3",
+]
+windows = [
+  "pywin32>=306; sys_platform == 'win32'",
+]
+aws-lab = [
+  # LAB_VERIFICATION_REQUIRED scripts only (scripts/sign-ami-manifest) — a
+  # real AWS account is needed to exercise these at all, so boto3 is kept
+  # out of the core dependency set the same way pywin32 is kept Windows-only.
+  "boto3>=1.34,<2",
+]
+
+# --- Monorepo package layout ---
+# One dependency set, one venv, many independently-named packages —
+# matches the spec's "modular monolith plus a small set of workers"
+# (§4: mirage-worker is "same codebase" as mirage-api). Deployment units
+# stay separated by directory and by their own Dockerfile ENTRYPOINT
+# (services/*/Dockerfile), not by separate Python distributions.
+#
+# `packages` must list `mirage_contracts.generated` explicitly (a real
+# `pip install .`, unlike `-e .` editable installs, only includes exactly
+# the packages named here — a subpackage under an already-listed top-level
+# package is NOT included automatically). Task #17's first real
+# `docker build` + `pip install .` inside the image caught this as a genuine
+# ModuleNotFoundError; every prior test run in this whole build used
+# `pip install -e ".[dev]"`, which happens to work regardless of this list
+# because editable installs path-insert the source tree directly. See
+# ARCHITECTURE_DECISIONS.md ADR-0024.
+[tool.setuptools]
+package-dir = { "mirage_contracts" = "contracts/python/mirage_contracts", "mirage_common" = "libs/mirage_common", "mirage_api" = "services/mirage-api/mirage_api", "mirage_worker" = "services/mirage-worker/mirage_worker", "mirage_outbox_relay" = "services/mirage-outbox-relay/mirage_outbox_relay", "mirage_agent_ingestion" = "services/mirage-agent-ingestion/mirage_agent_ingestion", "mirage_sandbox_gateway" = "services/mirage-sandbox-gateway/mirage_sandbox_gateway", "mirage_artifact_scanner" = "services/mirage-artifact-scanner/mirage_artifact_scanner", "mirage_report_worker" = "services/mirage-report-worker/mirage_report_worker", "mirage_endpoint" = "agents/mirage-endpoint/mirage_endpoint", "mirage_spider" = "agents/mirage-spider/mirage_spider", "mirage_env_controller" = "agents/mirage-env-controller/mirage_env_controller", "mirage_canary_collector" = "canary/mirage_canary_collector" }
+packages = ["mirage_contracts", "mirage_contracts.generated", "mirage_common", "mirage_api", "mirage_worker", "mirage_outbox_relay", "mirage_agent_ingestion", "mirage_sandbox_gateway", "mirage_artifact_scanner", "mirage_report_worker", "mirage_endpoint", "mirage_spider", "mirage_env_controller", "mirage_canary_collector"]
+
+# Same real-install-vs-editable-install gap for non-.py files: the bundled
+# JSON schemas under mirage_contracts/schemas/ (registry.py's own
+# _BUNDLED_SCHEMAS_DIR) are DATA, invisible to setuptools by default. An
+# editable install never noticed (it reads straight from the source tree);
+# a real `pip install .` silently produced a package with ZERO schemas
+# bundled — SchemaRegistry's glob would find nothing and every
+# validate_event()/build_event() call would fail at runtime, not at import
+# time, which is a much more dangerous silent failure than the
+# ModuleNotFoundError above. Caught by the same Docker build.
+[tool.setuptools.package-data]
+mirage_contracts = ["schemas/**/*.json"]
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+addopts = "-ra -q"
+testpaths = ["tests"]
+markers = [
+  "unit: fast, no external services",
+  "contract: schema/fixture validation",
+  "integration: requires Docker (real Postgres/NATS/etc via testcontainers)",
+  "fingerprint: fingerprint harness tests",
+]
+asyncio_mode = "auto"
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+src = ["contracts/python", "libs", "services", "agents", "canary", "tests", "scripts"]
+extend-exclude = ["**/generated/**", "contracts/typescript"]
+# ruff's directory-walk mode only considers *.py/*.pyi by default — every
+# CLI script under scripts/ is a real Python file (shebang `#!/usr/bin/env
+# python3`) with no extension, so `ruff check scripts` silently checked
+# ZERO of them despite `make lint` listing `scripts` as a target. Found via
+# pre-commit's ruff hook (which IS shebang-aware) flagging real issues
+# `make lint` had never caught — see ARCHITECTURE_DECISIONS.md ADR-0024.
+# Safe as a broad "scripts/*" glob only because scripts/ contains exclusively
+# Python tools today (no shell scripts); revisit if that ever changes.
+extend-include = ["scripts/*"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+ignore = ["E501"]
+
+[tool.ruff.lint.flake8-bugbear]
+# FastAPI's dependency-injection idiom is `param = Depends(...)` — the call
+# is meant to be evaluated once at route-registration time and re-resolved
+# per-request by FastAPI itself, not a mutable-default bug.
+extend-immutable-calls = ["fastapi.Depends", "fastapi.Security"]
+
+[tool.mypy]
+python_version = "3.12"
+warn_unused_ignores = true
+warn_redundant_casts = true
+disallow_untyped_defs = false
+exclude = ["contracts/typescript", "dashboard", "node_modules", "infra/terraform", "generated/"]
+# contracts/python is NOT passed as an explicit mypy target anywhere (see
+# Makefile `typecheck`) — mypy's `exclude` only applies to files it discovers
+# itself while following imports, never to paths given explicitly on the
+# command line. Resolving mirage_contracts via mypy_path (instead of as an
+# explicit target) means services/libs importing it pull in and check its
+# hand-written modules (ulid.py, envelope.py, registry.py, ...) transitively,
+# while `exclude` correctly skips the datamodel-code-generator output under
+# mirage_contracts/generated/ (which uses pydantic v1-style `constr(...)`
+# call-as-annotation syntax mypy rejects — valid at runtime, not statically
+# typeable; regenerating it is not something we control, see
+# scripts/generate-contracts).
+mypy_path = "contracts/python"
+
+[[tool.mypy.overrides]]
+module = [
+    "win32serviceutil", "win32service", "win32event", "win32api", "win32crypt",
+    "servicemanager", "win32file", "pywintypes",
+]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# boto3 is an aws-lab-only optional dependency (see pyproject.toml
+# project.optional-dependencies) — not installed in the base dev venv, so
+# mypy needs this override rather than a hard install just to typecheck
+# scripts/sign-ami-manifest.
+module = ["boto3", "boto3.*", "botocore.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# ReportLab does not publish inline typing. Its public surface is isolated
+# behind mirage_common.reports and covered by PDF structure tests.
+module = ["reportlab", "reportlab.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# datamodel-code-generator emits pydantic v1-style constr(...)/conint(...)
+# calls used AS type annotations — valid for Pydantic at runtime, not
+# statically valid to mypy. This is generated output (scripts/generate-contracts);
+# `exclude` does not apply to modules reached via import resolution (only to
+# directories mypy walks itself), so it is silenced here per-module instead.
+module = ["mirage_contracts.generated.*"]
+ignore_errors = true

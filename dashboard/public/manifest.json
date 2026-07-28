@@ -1,0 +1,8 @@
+{
+  "name": "Mirage Analyst Operations",
+  "short_name": "Mirage",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#071217",
+  "theme_color": "#0c1b22"
+}

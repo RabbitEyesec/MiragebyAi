@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mirage.internal/schemas/events/agent.enrollment_revoked.v1.schema.json",
+  "title": "AgentEnrollmentRevokedPayload",
+  "description": "Payload for event_type=agent.enrollment_revoked, schema_version major=1. Audit trail requirement: revocation. Emitted on sandbox destruction or manual revocation.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["agent_id", "certificate_serial", "reason"],
+  "properties": {
+    "agent_id": {"type": "string", "minLength": 1, "maxLength": 256},
+    "certificate_serial": {"type": "string", "minLength": 1, "maxLength": 128},
+    "reason": {"type": "string", "enum": ["SANDBOX_DESTROYED", "MANUAL_REVOCATION", "COMPROMISE_SUSPECTED", "SUPERSEDED_BY_RENEWAL"]}
+  }
+}

@@ -1,0 +1,47 @@
+#!/usr/bin/env python3
+"""Independently verify a signed Mirage case report package."""
+from __future__ import annotations
+
+import argparse
+from pathlib import Path
+
+from mirage_common.reports import verify_report_package
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("package", type=Path)
+    parser.add_argument(
+        "--public-key",
+        type=Path,
+        help="offline KMS public key PEM to trust explicitly; overrides the trust store",
+    )
+    parser.add_argument(
+        "--trust-store",
+        type=Path,
+        help="directory of trusted public keys (default: $MIRAGE_TRUST_STORE_DIR or "
+        "/etc/mirage/trust/release-keys); the report's own embedded key is never "
+        "trusted on its own",
+    )
+    parser.add_argument(
+        "--evidence-manifest-sha256",
+        help="expected canonical evidence manifest hash",
+    )
+    args = parser.parse_args()
+    public_key = args.public_key.read_bytes() if args.public_key else None
+    report = verify_report_package(
+        args.package.read_bytes(),
+        public_key_pem=public_key,
+        trust_store_dir=args.trust_store,
+        expected_evidence_manifest_sha256=args.evidence_manifest_sha256,
+    )
+    print(f"valid={str(report.valid).lower()}")
+    if report.manifest_sha256:
+        print(f"manifest_sha256={report.manifest_sha256}")
+    for error in report.errors:
+        print(f"ERROR: {error}")
+    return 0 if report.valid else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

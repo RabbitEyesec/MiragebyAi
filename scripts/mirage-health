@@ -1,0 +1,89 @@
+#!/usr/bin/env python3
+"""CLI health command (Step 4b): `scripts/mirage-health` — authenticates
+against Keycloak (or reuses a pre-fetched token) and calls
+GET /api/v1/health on mirage-api, printing a human-readable report. Exits
+non-zero when overall status is not HEALTHY, so it's usable as a CI/ops
+liveness gate, not just a human-facing report.
+
+Usage:
+    scripts/mirage-health                                  # uses MIRAGE_API_TOKEN env var
+    scripts/mirage-health --username dev-platform-admin --password ...
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import stat
+import sys
+from pathlib import Path
+
+import httpx
+
+
+def protected_value(environment_name: str) -> str | None:
+    path_value = os.environ.get(environment_name)
+    if not path_value:
+        return None
+    path = Path(path_value)
+    mode = path.stat().st_mode
+    if mode & (stat.S_IRWXG | stat.S_IRWXO):
+        raise RuntimeError(f"{environment_name} must point to a mode-0600 file")
+    return path.read_text().strip()
+
+
+def get_token(keycloak_url: str, username: str, password: str) -> str:
+    resp = httpx.post(
+        f"{keycloak_url}/realms/mirage/protocol/openid-connect/token",
+        data={"client_id": "mirage-dashboard", "username": username, "password": password, "grant_type": "password"},
+        timeout=10,
+    )
+    resp.raise_for_status()
+    return resp.json()["access_token"]
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--api-url", default=os.environ.get("MIRAGE_API_URL", "http://localhost:8000"))
+    parser.add_argument("--keycloak-url", default=os.environ.get("MIRAGE_KEYCLOAK_URL", "http://localhost:8081"))
+    parser.add_argument("--username", default=os.environ.get("MIRAGE_CLI_USERNAME"))
+    parser.add_argument("--password", default=os.environ.get("MIRAGE_CLI_PASSWORD"))
+    parser.add_argument("--json", action="store_true", help="machine-readable output")
+    args = parser.parse_args()
+
+    token = protected_value("MIRAGE_API_TOKEN_FILE") or os.environ.get("MIRAGE_API_TOKEN")
+    if not token:
+        username = protected_value("MIRAGE_CLI_USERNAME_FILE") or args.username
+        password = protected_value("MIRAGE_CLI_PASSWORD_FILE") or args.password
+        if not username or not password:
+            print(
+                "No protected token file or protected username/password files were "
+                "configured.",
+                file=sys.stderr,
+            )
+            return 2
+        token = get_token(args.keycloak_url, username, password)
+
+    resp = httpx.get(f"{args.api_url}/api/v1/health", headers={"Authorization": f"Bearer {token}"}, timeout=15)
+    if resp.status_code == 401:
+        print("UNAUTHORIZED — token invalid or expired.", file=sys.stderr)
+        return 2
+    if resp.status_code == 403:
+        print("FORBIDDEN — this account does not have the platform_admin role.", file=sys.stderr)
+        return 2
+    resp.raise_for_status()
+    body = resp.json()
+
+    if args.json:
+        print(json.dumps(body, indent=2))
+    else:
+        print(f"Overall status: {body['status']}")
+        for c in body["components"]:
+            latency = f"{c['latency_ms']:.1f}ms" if c["latency_ms"] is not None else "n/a"
+            print(f"  {c['component']:<18} {c['status']:<10} {latency:<10} {c['detail'] or ''}")
+
+    return 0 if body["status"] == "HEALTHY" else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

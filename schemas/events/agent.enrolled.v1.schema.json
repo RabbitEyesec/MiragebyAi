@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mirage.internal/schemas/events/agent.enrolled.v1.schema.json",
+  "title": "AgentEnrolledPayload",
+  "description": "Payload for event_type=agent.enrolled, schema_version major=1. Emitted by mirage-agent-ingestion (Step 3) on successful one-time-token enrolment. Audit trail requirement: enrolment.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["agent_id", "role", "certificate_serial", "certificate_profile", "build_hash", "host_fingerprint", "enrollment_token_id"],
+  "properties": {
+    "agent_id": {"type": "string", "minLength": 1, "maxLength": 256},
+    "role": {"type": "string", "enum": ["ENDPOINT", "SPIDER", "ENV_CONTROLLER", "BROKER_CLIENT", "INTERNAL_CONTROL"]},
+    "certificate_serial": {"type": "string", "minLength": 1, "maxLength": 128},
+    "certificate_profile": {"type": "string", "enum": ["MirageEndpoint", "MirageSpider", "MirageEnvironmentController", "BrokerClient", "InternalControl"]},
+    "build_hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "host_fingerprint": {"type": "string", "minLength": 1, "maxLength": 256},
+    "enrollment_token_id": {"type": "string", "pattern": "^[0-7][0-9A-HJKMNP-TV-Z]{25}$"}
+  }
+}

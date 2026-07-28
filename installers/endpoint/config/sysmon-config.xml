@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Approved Sysmon configuration for the Mirage employee endpoint (Step 4).
+  Deliberately conservative and broadly modeled on well-known community
+  baselines (e.g. SwiftOnSecurity's sysmon-config) rather than reinvented —
+  Sysmon telemetry quality on Windows is a solved problem; the goal here is
+  "known-good defaults," not novelty. Captures process creation, network
+  connections, file-create (for canary bait interaction visibility later,
+  Stage 7), and registry persistence-relevant events, while excluding
+  extremely high-volume/low-value noise (e.g. every DNS query).
+-->
+<Sysmon schemaversion="4.90">
+  <EventFiltering>
+
+    <ProcessCreate onmatch="exclude">
+      <Image condition="end with">\WmiPrvSE.exe</Image>
+      <Image condition="end with">\SearchIndexer.exe</Image>
+    </ProcessCreate>
+
+    <FileCreateTime onmatch="exclude">
+      <Image condition="begin with">C:\Windows\</Image>
+    </FileCreateTime>
+
+    <NetworkConnect onmatch="exclude">
+      <DestinationPort condition="is">137</DestinationPort>
+      <DestinationPort condition="is">138</DestinationPort>
+    </NetworkConnect>
+
+    <!-- File creation is intentionally NOT globally excluded — this is how
+         Spider/decoy-file interaction is eventually observed on the
+         sandbox side (Stage 7), and how lateral staging on the endpoint
+         itself is observed here. Narrowed to reduce noise from common
+         update/cache churn only. -->
+    <FileCreate onmatch="exclude">
+      <TargetFilename condition="contains">\AppData\Local\Microsoft\Windows\INetCache\</TargetFilename>
+      <TargetFilename condition="contains">\AppData\Local\Temp\chrome_</TargetFilename>
+    </FileCreate>
+
+    <RegistryEvent onmatch="include">
+      <TargetObject condition="contains">\CurrentVersion\Run</TargetObject>
+      <TargetObject condition="contains">\CurrentVersion\RunOnce</TargetObject>
+      <TargetObject condition="contains">\Services\</TargetObject>
+    </RegistryEvent>
+
+    <ProcessAccess onmatch="include">
+      <TargetImage condition="end with">\lsass.exe</TargetImage>
+    </ProcessAccess>
+
+    <CreateRemoteThread onmatch="exclude">
+      <SourceImage condition="end with">\Mirage\Endpoint\mirage-endpoint-service.exe</SourceImage>
+    </CreateRemoteThread>
+
+  </EventFiltering>
+</Sysmon>

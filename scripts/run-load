@@ -1,0 +1,4 @@
+#!/usr/bin/env python3
+from mirage_common.load_test import cli
+
+raise SystemExit(cli())

@@ -1,0 +1,86 @@
+# Step 8b — HTTP broker (Appendix H.1): "Nginx accepts the connection from
+# the start and calls /route (auth_request) before upstream selection."
+#
+# Dynamic upstream selection via auth_request + auth_request_set, reading
+# the X-Mirage-Upstream response header mirage-api's /route sets (Step 8a).
+# auth_request subrequests can only capture response HEADERS, not JSON
+# bodies — that's why /route sets both.
+#
+# TLS is deliberately NOT terminated here for local dev/test (plain HTTP on
+# 8080) — "Mirage owns TLS" for the real lab hostname is a real cert
+# issuance concern already proven buildable via step-ca (Step 4), not a new
+# mechanism this broker needs to re-prove; see KNOWN_ISSUES.md for the
+# scope boundary. Env vars below are substituted by `envsubst` at container
+# start (see docker-compose.broker.yml's command).
+
+worker_processes 1;
+error_log /dev/stderr info;
+pid /tmp/nginx.pid;
+
+events {
+    worker_connections 256;
+}
+
+http {
+    # ipv6=off: verified empirically — host.docker.internal resolves to both
+    # an A and AAAA record, and the AAAA address is not actually reachable
+    # from inside the container on this Docker setup ("Network unreachable"
+    # connecting to the auth_request subrequest's upstream) — not a guess.
+    resolver 127.0.0.11 valid=5s ipv6=off;
+    access_log /dev/stdout;
+    client_body_temp_path /tmp/client_body;
+    proxy_temp_path /tmp/proxy;
+
+    # Verified empirically: nginx's auth_request module only captures a
+    # $upstream_http_<name> variable from the subrequest response if it is
+    # explicitly named in an `auth_request_set` directive somewhere in the
+    # config — referencing $upstream_http_x_mirage_upstream directly inside
+    # a bare `map` (with no accompanying auth_request_set) silently reads
+    # as empty, so `map` always fell through to the default backend even
+    # though mirage-api's response genuinely carried the header (confirmed
+    # with a direct curl from inside this container). $mirage_upstream
+    # below is what auth_request_set below actually populates.
+    map $mirage_upstream $mirage_backend {
+        "SANDBOX"  "${SANDBOX_UPSTREAM}";
+        default    "${EMPLOYEE_UPSTREAM}";
+    }
+
+    # Standard WebSocket-upgrade idiom (Appendix H.1: "WebSocket upgrades...
+    # are explicit") — Connection: upgrade only when the client actually
+    # requested an upgrade, close otherwise.
+    map $http_upgrade $connection_upgrade {
+        default upgrade;
+        ''      close;
+    }
+
+    server {
+        listen 8080;
+
+        # Internal-only subrequest target — never reachable directly by a
+        # client (nginx enforces `internal;`). Builds the real §6.1
+        # match_key from THIS request's own attributes.
+        location = /_mirage_route_check {
+            internal;
+            proxy_pass "${MIRAGE_API_URL}/route?match_key=HTTP%7Chttp-broker-1%7C$remote_addr%7C$host&protocol=HTTP";
+            proxy_pass_request_body off;
+            proxy_set_header Content-Length "";
+            proxy_set_header X-Mirage-Client-Cert-Serial "${MIRAGE_BROKER_CERT_SERIAL}";
+            proxy_set_header X-Mirage-Proxy-Auth "${MIRAGE_BROKER_PROXY_SECRET}";
+        }
+
+        location / {
+            auth_request /_mirage_route_check;
+            auth_request_set $mirage_upstream $upstream_http_x_mirage_upstream;
+            # Backend chosen ONCE, before establishment (spec: "no mid-session
+            # migration claim exists") — $mirage_backend is resolved once per
+            # request by the map above, driven by this same auth_request.
+            proxy_set_header X-Forwarded-For $remote_addr;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_set_header Host $host;
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection $connection_upgrade;
+            proxy_pass http://$mirage_backend;
+        }
+    }
+}

@@ -1,0 +1,97 @@
+{
+  "schema_version": "mirage.failure-recipe/1.0",
+  "notes": "Copy outside source control, replace every REPLACE_ME target, and version the completed commands with the signed acceptance evidence. Commands are argv arrays; no shell expansion occurs.",
+  "scenarios": {
+    "FAIL-01": {
+      "precheck": {"argv": ["curl", "-fsS", "REPLACE_ME_ELASTIC_URL/_cluster/health"], "timeout_seconds": 15},
+      "trigger": {"argv": ["docker", "stop", "REPLACE_ME_ELASTIC_CONTAINER"], "timeout_seconds": 60},
+      "detect": {"argv": ["curl", "-fsS", "REPLACE_ME_API_URL/health"], "expected_exit_codes": [1, 22], "timeout_seconds": 60},
+      "recover": {"argv": ["docker", "start", "REPLACE_ME_ELASTIC_CONTAINER"], "timeout_seconds": 120},
+      "verify": {"argv": ["curl", "-fsS", "REPLACE_ME_ELASTIC_URL/_cluster/health"], "timeout_seconds": 120}
+    },
+    "FAIL-02": {
+      "precheck": {"argv": ["curl", "-fsS", "REPLACE_ME_API_URL/health"], "timeout_seconds": 15},
+      "trigger": {"argv": ["docker", "stop", "REPLACE_ME_AI_PROVIDER_CONTAINER"], "timeout_seconds": 60},
+      "detect": {"argv": ["curl", "-fsS", "REPLACE_ME_OTEL_QUERY_AI_FALLBACK"], "timeout_seconds": 60},
+      "recover": {"argv": ["docker", "start", "REPLACE_ME_AI_PROVIDER_CONTAINER"], "timeout_seconds": 120},
+      "verify": {"argv": ["curl", "-fsS", "REPLACE_ME_AI_PROVIDER_HEALTH"], "timeout_seconds": 120}
+    },
+    "FAIL-03": {
+      "precheck": {"argv": ["pwsh", "-File", "REPLACE_ME_WINDOWS_CONTROL_SCRIPT", "status", "MirageSpider"], "timeout_seconds": 60},
+      "trigger": {"argv": ["pwsh", "-File", "REPLACE_ME_WINDOWS_CONTROL_SCRIPT", "stop", "MirageSpider"], "timeout_seconds": 60},
+      "detect": {"argv": ["curl", "-fsS", "REPLACE_ME_SPIDER_ALERT_QUERY"], "timeout_seconds": 90},
+      "recover": {"argv": ["pwsh", "-File", "REPLACE_ME_WINDOWS_CONTROL_SCRIPT", "start", "MirageSpider"], "timeout_seconds": 60},
+      "verify": {"argv": ["pwsh", "-File", "REPLACE_ME_WINDOWS_CONTROL_SCRIPT", "status", "MirageSpider"], "timeout_seconds": 60}
+    },
+    "FAIL-04": {
+      "precheck": {"argv": ["pwsh", "-File", "REPLACE_ME_WINDOWS_CONTROL_SCRIPT", "status", "MirageEnvironmentController"], "timeout_seconds": 60},
+      "trigger": {"argv": ["pwsh", "-File", "REPLACE_ME_WINDOWS_CONTROL_SCRIPT", "stop", "MirageEnvironmentController"], "timeout_seconds": 60},
+      "detect": {"argv": ["curl", "-fsS", "REPLACE_ME_CONTROLLER_ALERT_QUERY"], "timeout_seconds": 90},
+      "recover": {"argv": ["pwsh", "-File", "REPLACE_ME_WINDOWS_CONTROL_SCRIPT", "start", "MirageEnvironmentController"], "timeout_seconds": 60},
+      "verify": {"argv": ["pwsh", "-File", "REPLACE_ME_WINDOWS_CONTROL_SCRIPT", "status", "MirageEnvironmentController"], "timeout_seconds": 60}
+    },
+    "FAIL-05": {
+      "precheck": {"argv": ["aws", "s3api", "head-bucket", "--bucket", "REPLACE_ME_EVIDENCE_BUCKET"], "timeout_seconds": 30},
+      "trigger": {"argv": ["aws", "iam", "put-role-policy", "--role-name", "REPLACE_ME_EVIDENCE_ROLE", "--policy-name", "mirage-fault-deny-write", "--policy-document", "REPLACE_ME_DENY_POLICY_FILE"], "timeout_seconds": 60},
+      "detect": {"argv": ["curl", "-fsS", "REPLACE_ME_S3_FAILURE_ALERT_QUERY"], "timeout_seconds": 90},
+      "recover": {"argv": ["aws", "iam", "delete-role-policy", "--role-name", "REPLACE_ME_EVIDENCE_ROLE", "--policy-name", "mirage-fault-deny-write"], "timeout_seconds": 60},
+      "verify": {"argv": ["aws", "s3api", "head-bucket", "--bucket", "REPLACE_ME_EVIDENCE_BUCKET"], "timeout_seconds": 60}
+    },
+    "FAIL-06": {
+      "precheck": {"argv": ["curl", "-fsS", "REPLACE_ME_PROJECTION_CURRENT_QUERY"], "timeout_seconds": 30},
+      "trigger": {"argv": ["REPLACE_ME_FAULT_CLIENT", "publish-gap", "--case-id", "REPLACE_ME_CASE_ID"], "timeout_seconds": 60},
+      "detect": {"argv": ["curl", "-fsS", "REPLACE_ME_PROJECTION_GAP_QUERY"], "timeout_seconds": 60},
+      "recover": {"argv": ["REPLACE_ME_FAULT_CLIENT", "replay-gap", "--case-id", "REPLACE_ME_CASE_ID"], "timeout_seconds": 60},
+      "verify": {"argv": ["curl", "-fsS", "REPLACE_ME_PROJECTION_CURRENT_QUERY"], "timeout_seconds": 60}
+    },
+    "FAIL-07": {
+      "precheck": {"argv": ["REPLACE_ME_CLOCK_CONTROL", "status"], "timeout_seconds": 30},
+      "trigger": {"argv": ["REPLACE_ME_CLOCK_CONTROL", "offset", "6"], "timeout_seconds": 30},
+      "detect": {"argv": ["curl", "-fsS", "REPLACE_ME_CLOCK_ALERT_QUERY"], "timeout_seconds": 60},
+      "recover": {"argv": ["REPLACE_ME_CLOCK_CONTROL", "restore"], "timeout_seconds": 30},
+      "verify": {"argv": ["REPLACE_ME_CLOCK_CONTROL", "status"], "timeout_seconds": 60}
+    },
+    "FAIL-08": {
+      "precheck": {"argv": ["REPLACE_ME_FAULT_CLIENT", "route-status", "--case-id", "REPLACE_ME_CASE_ID"], "timeout_seconds": 30},
+      "trigger": {"argv": ["REPLACE_ME_FAULT_CLIENT", "revoke-route", "--case-id", "REPLACE_ME_CASE_ID"], "timeout_seconds": 30},
+      "detect": {"argv": ["curl", "-fsS", "REPLACE_ME_ROUTE_AUDIT_QUERY"], "timeout_seconds": 60},
+      "recover": {"argv": ["REPLACE_ME_FAULT_CLIENT", "restore-route", "--case-id", "REPLACE_ME_CASE_ID"], "timeout_seconds": 30},
+      "verify": {"argv": ["REPLACE_ME_FAULT_CLIENT", "new-connection-route", "--case-id", "REPLACE_ME_CASE_ID"], "timeout_seconds": 60}
+    },
+    "FAIL-09": {
+      "precheck": {"argv": ["REPLACE_ME_FAULT_CLIENT", "fingerprint", "--case-id", "REPLACE_ME_CASE_ID"], "timeout_seconds": 60},
+      "trigger": {"argv": ["REPLACE_ME_FAULT_CLIENT", "fingerprint-must-fail", "--case-id", "REPLACE_ME_CASE_ID"], "timeout_seconds": 60},
+      "detect": {"argv": ["curl", "-fsS", "REPLACE_ME_FINGERPRINT_ALERT_QUERY"], "timeout_seconds": 60},
+      "recover": {"argv": ["REPLACE_ME_FAULT_CLIENT", "restore-fingerprint", "--case-id", "REPLACE_ME_CASE_ID"], "timeout_seconds": 60},
+      "verify": {"argv": ["REPLACE_ME_FAULT_CLIENT", "fingerprint", "--case-id", "REPLACE_ME_CASE_ID"], "timeout_seconds": 60}
+    },
+    "FAIL-10": {
+      "precheck": {"argv": ["REPLACE_ME_FAULT_CLIENT", "issue-canary", "--case-id", "REPLACE_ME_CASE_ID"], "timeout_seconds": 30},
+      "trigger": {"argv": ["REPLACE_ME_FAULT_CLIENT", "withhold-canary-callback", "--case-id", "REPLACE_ME_CASE_ID"], "timeout_seconds": 30},
+      "detect": {"argv": ["curl", "-fsS", "REPLACE_ME_CANARY_ABSENCE_QUERY"], "timeout_seconds": 120},
+      "recover": {"argv": ["REPLACE_ME_FAULT_CLIENT", "close-canary-window", "--case-id", "REPLACE_ME_CASE_ID"], "timeout_seconds": 30},
+      "verify": {"argv": ["curl", "-fsS", "REPLACE_ME_CANARY_NO_LOCATION_CLAIM_QUERY"], "timeout_seconds": 60}
+    },
+    "FAIL-11": {
+      "precheck": {"argv": ["REPLACE_ME_BROWSER_FAULT_CLIENT", "connect-sse"], "timeout_seconds": 30},
+      "trigger": {"argv": ["REPLACE_ME_BROWSER_FAULT_CLIENT", "disconnect-sse"], "timeout_seconds": 30},
+      "detect": {"argv": ["curl", "-fsS", "REPLACE_ME_SSE_CONNECTION_QUERY"], "timeout_seconds": 60},
+      "recover": {"argv": ["REPLACE_ME_BROWSER_FAULT_CLIENT", "reconnect-sse", "--last-event-id", "REPLACE_ME_LAST_EVENT_ID"], "timeout_seconds": 30},
+      "verify": {"argv": ["REPLACE_ME_BROWSER_FAULT_CLIENT", "assert-resumed-once"], "timeout_seconds": 60}
+    },
+    "FAIL-12": {
+      "precheck": {"argv": ["curl", "-fsS", "REPLACE_ME_SCANNER_HEALTH"], "timeout_seconds": 30},
+      "trigger": {"argv": ["REPLACE_ME_FAULT_CLIENT", "upload-unsafe-artifact", "--case-id", "REPLACE_ME_CASE_ID"], "timeout_seconds": 60},
+      "detect": {"argv": ["curl", "-fsS", "REPLACE_ME_ARTIFACT_QUARANTINE_QUERY"], "timeout_seconds": 60},
+      "recover": {"argv": ["REPLACE_ME_FAULT_CLIENT", "remove-unsafe-artifact", "--case-id", "REPLACE_ME_CASE_ID"], "timeout_seconds": 60},
+      "verify": {"argv": ["curl", "-fsS", "REPLACE_ME_NO_ARTIFACT_DEPLOY_QUERY"], "timeout_seconds": 60}
+    },
+    "FAIL-13": {
+      "precheck": {"argv": ["REPLACE_ME_FAULT_CLIENT", "control-identity-status", "--case-id", "REPLACE_ME_CASE_ID"], "timeout_seconds": 30},
+      "trigger": {"argv": ["REPLACE_ME_FAULT_CLIENT", "revoke-control-identity", "--case-id", "REPLACE_ME_CASE_ID"], "timeout_seconds": 60},
+      "detect": {"argv": ["curl", "-fsS", "REPLACE_ME_CONTROL_AUTH_ALERT_QUERY"], "timeout_seconds": 90},
+      "recover": {"argv": ["REPLACE_ME_FAULT_CLIENT", "rotate-control-identity", "--case-id", "REPLACE_ME_CASE_ID"], "timeout_seconds": 120},
+      "verify": {"argv": ["REPLACE_ME_FAULT_CLIENT", "assert-old-identity-rejected", "--case-id", "REPLACE_ME_CASE_ID"], "timeout_seconds": 60}
+    }
+  }
+}

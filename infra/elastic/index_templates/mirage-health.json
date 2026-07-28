@@ -1,0 +1,17 @@
+{
+  "index_patterns": ["mirage-health*"],
+  "data_stream": {},
+  "composed_of": ["mirage-common-mappings"],
+  "priority": 200,
+  "template": {
+    "settings": {
+      "index.lifecycle.name": "mirage-telemetry-ilm-policy",
+      "index.default_pipeline": "mirage-set-timestamp",
+      "number_of_replicas": 0
+    }
+  },
+  "_meta": {
+    "description": "system.health events, including Step 4b's synthetic health-check transaction. Not one of Appendix E's seven named streams (mirage-audit is the closest fit conceptually) but split out separately since operational health/heartbeat volume and retention needs differ from the audit trail's long-retention requirement — see infra/elastic/README.md.",
+    "spec_reference": "Appendix D (system.health subject), Step 4b"
+  }
+}

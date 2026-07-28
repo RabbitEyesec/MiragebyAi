@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mirage.internal/schemas/events/case.state_changed.v1.schema.json",
+  "title": "CaseStateChangedPayload",
+  "description": "Payload for event_type=case.state_changed, schema_version major=1. Mirrors case_state_transitions (Appendix B). Every state-changing transaction writes this via the transactional outbox (Step 6, §6.3).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["case_id", "from_state", "to_state", "actor", "actor_type", "reason", "new_version", "correlation_id"],
+  "properties": {
+    "case_id": {"type": "string", "pattern": "^[0-7][0-9A-HJKMNP-TV-Z]{25}$"},
+    "from_state": {"$ref": "#/$defs/CaseState"},
+    "to_state": {"$ref": "#/$defs/CaseState"},
+    "actor": {"type": "string", "minLength": 1, "maxLength": 256},
+    "actor_type": {"type": "string", "enum": ["ANALYST", "AI", "SYSTEM"]},
+    "reason": {"type": "string", "minLength": 1, "maxLength": 1024},
+    "new_version": {"type": "integer", "minimum": 1},
+    "correlation_id": {"type": "string", "pattern": "^[0-7][0-9A-HJKMNP-TV-Z]{25}$"}
+  },
+  "$defs": {
+    "CaseState": {
+      "type": "string",
+      "enum": [
+        "CREATED", "ARMED", "MONITORING", "STEERING_PENDING", "SANDBOX_ACTIVE",
+        "ENGAGING", "CONCLUDING", "EVIDENCE_VERIFYING", "EXPORTED", "DESTROYED"
+      ]
+    }
+  }
+}

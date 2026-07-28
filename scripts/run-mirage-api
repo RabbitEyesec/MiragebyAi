@@ -1,0 +1,93 @@
+#!/usr/bin/env python3
+"""Runs mirage-api (Step 4b's engineering console + Step 8a's /route API)
+against the real dev stack. Ctrl-C to stop cleanly. Same env-var-reading
+convention as scripts/run-outbox-relay / run-detection-adapter — this is
+the container CMD for infra/compose/docker-compose.development.yml's `mirage-api`
+service, and also works unmodified for a developer running it directly on
+the host against `docker compose up` infra services.
+"""
+from __future__ import annotations
+
+import os
+import sys
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO_ROOT / "libs"))
+sys.path.insert(0, str(REPO_ROOT / "services" / "mirage-api"))
+
+import uvicorn  # noqa: E402
+from mirage_api.app import create_app  # noqa: E402
+from mirage_api.health import HealthCheckConfig  # noqa: E402
+
+from mirage_common.evidence import (  # noqa: E402
+    EvidenceService,
+    EvidenceStorageConfig,
+    S3ObjectStore,
+)
+from mirage_common.telemetry import configure_otel  # noqa: E402
+
+
+def pg_dsn_from_env() -> str:
+    host = os.environ.get("MIRAGE_POSTGRES_HOST", "localhost")
+    port = os.environ.get("MIRAGE_POSTGRES_PORT", "5432")
+    user = os.environ.get("MIRAGE_POSTGRES_USER", "mirage_dev")
+    password = os.environ.get("MIRAGE_POSTGRES_PASSWORD", "mirage_dev_local_only")
+    db = os.environ.get("MIRAGE_POSTGRES_DB", "mirage")
+    return f"host={host} port={port} user={user} password={password} dbname={db}"
+
+
+def main() -> int:
+    if otel_endpoint := os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT"):
+        configure_otel(
+            service_name="mirage-api",
+            endpoint=otel_endpoint,
+            environment=os.environ.get("MIRAGE_ENV", "development"),
+        )
+    nats_url = os.environ.get("MIRAGE_NATS_URL", "nats://localhost:4222")
+    health_config = HealthCheckConfig(
+        postgres_dsn=pg_dsn_from_env(),
+        nats_monitoring_url=os.environ.get("MIRAGE_NATS_MONITORING_URL", "http://localhost:8222/healthz"),
+        elasticsearch_url=os.environ.get("MIRAGE_ELASTICSEARCH_URL", "http://localhost:9200"),
+        keycloak_issuer_url=os.environ.get("MIRAGE_KEYCLOAK_ISSUER_URL", "http://localhost:8081/realms/mirage"),
+        step_ca_url=os.environ.get("MIRAGE_STEP_CA_URL", "https://localhost:9000"),
+        step_ca_root_cert_path=os.environ.get("MIRAGE_STEP_CA_ROOT_CERT_PATH", str(REPO_ROOT / "infra" / "step-ca" / "dev-provisioner-keys" / "root_ca.crt")),
+        agent_ingestion_url=os.environ.get("MIRAGE_AGENT_INGESTION_URL"),
+    )
+    evidence_service = None
+    if os.environ.get("MIRAGE_EVIDENCE_BUCKET"):
+        evidence_config = EvidenceStorageConfig(
+            bucket=os.environ["MIRAGE_EVIDENCE_BUCKET"],
+            region=os.environ["MIRAGE_EVIDENCE_REGION"],
+            object_lock_mode=os.environ["MIRAGE_EVIDENCE_OBJECT_LOCK_MODE"],
+            retention_days=int(os.environ["MIRAGE_EVIDENCE_RETENTION_DAYS"]),
+            multipart_threshold_mb=int(os.environ["MIRAGE_EVIDENCE_MULTIPART_THRESHOLD_MB"]),
+            max_retries=int(os.environ["MIRAGE_EVIDENCE_MAX_RETRIES"]),
+            request_timeout_seconds=int(
+                os.environ["MIRAGE_EVIDENCE_REQUEST_TIMEOUT_SECONDS"]
+            ),
+            kms_signing_key_arn=os.environ["MIRAGE_KMS_SIGNING_KEY_ARN"],
+            endpoint_url=os.environ.get("MIRAGE_EVIDENCE_ENDPOINT_URL"),
+        )
+        evidence_service = EvidenceService(store=S3ObjectStore(evidence_config))
+    application = create_app(
+        pg_dsn=pg_dsn_from_env(),
+        nats_url=nats_url,
+        health_config=health_config,
+        elasticsearch_url=os.environ.get("MIRAGE_ELASTICSEARCH_URL", "http://localhost:9200"),
+        oidc_issuer_url=os.environ.get("MIRAGE_KEYCLOAK_ISSUER_URL", "http://localhost:8081/realms/mirage"),
+        proxy_shared_secret=os.environ["MIRAGE_PROXY_SHARED_SECRET"],
+        evidence_service=evidence_service,
+        canary_signing_key=(
+            os.environ["MIRAGE_CANARY_INGESTION_HMAC"].encode()
+            if os.environ.get("MIRAGE_CANARY_INGESTION_HMAC")
+            else None
+        ),
+    )
+    port = int(os.environ.get("MIRAGE_API_PORT", "8000"))
+    uvicorn.run(application, host="0.0.0.0", port=port, log_level=os.environ.get("MIRAGE_LOG_LEVEL", "info").lower())  # noqa: S104 -- container-internal bind, not host-exposed by default (see compose port mapping)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
