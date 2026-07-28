@@ -69,6 +69,43 @@ def ssh_target_image() -> str:
     return pull_image_with_retry(SSH_TARGET_IMAGE)
 
 
+@pytest.fixture(scope="session")
+def host_gateway_ip() -> str:
+    """The literal IPv4 address containers reach the host on.
+
+    Containers that must call back into a server running on the host cannot
+    simply be handed the name `host.docker.internal`. Docker Desktop's embedded
+    DNS answers for it, but on native Linux (GitHub Actions) the name exists
+    ONLY in /etc/hosts via `extra_hosts: host-gateway` — and nginx, once its
+    `proxy_pass` contains a variable, resolves through the `resolver` directive
+    (127.0.0.11) and never consults /etc/hosts. The auth_request subrequest then
+    fails to resolve and nginx answers 500, which is what
+    `assert 500 == 200` in test_http_broker was reporting.
+
+    Asking a throwaway container to resolve the name is the portable answer: it
+    yields Docker Desktop's gateway (192.168.65.254) or the Linux bridge gateway
+    (172.17.0.1) as appropriate, and a literal IP needs no DNS at all.
+
+    ahostsv4, not hosts: `getent hosts` returns the IPv6 record first on Docker
+    Desktop, and that address is not reachable from inside a container — the
+    same finding already recorded as `ipv6=off` in nginx.conf.template.
+    """
+    import docker
+
+    image = pull_image_with_retry("alpine:3.20")
+    output = docker.from_env().containers.run(
+        image,
+        ["getent", "ahostsv4", "host.docker.internal"],
+        extra_hosts={"host.docker.internal": "host-gateway"},
+        remove=True,
+    )
+    for line in output.decode().splitlines():
+        address = line.split()[0] if line.split() else ""
+        if address:
+            return address
+    raise RuntimeError("could not resolve host.docker.internal to an IPv4 address")
+
+
 @pytest.fixture(scope="module")
 def _nats_docker_container():
     container = DockerContainer("nats:2.10-alpine").with_command("-js -m 8222").with_exposed_ports(4222, 8222)
@@ -336,7 +373,7 @@ def live_agent_ingestion_server(tmp_path, pg_conn, pg_dsn, ca_config, step_ca_co
 
 
 @pytest.fixture
-async def live_mirage_api_server(pg_dsn, nats_container, mirage_streams, elasticsearch_url):
+async def live_mirage_api_server(pg_dsn, nats_container, mirage_streams, elasticsearch_url, host_gateway_ip):
     """Runs the real mirage-api FastAPI app under a real uvicorn server,
     plain HTTP, bound to 0.0.0.0 (not just 127.0.0.1) so real Docker
     containers (Step 8b/8c's HTTP/SSH broker containers) can reach it via
@@ -386,7 +423,10 @@ async def live_mirage_api_server(pg_dsn, nats_container, mirage_streams, elastic
 
     yield {
         "base_url_host": f"http://127.0.0.1:{port}",
-        "base_url_container": f"http://host.docker.internal:{port}",
+        # A literal IP, not `host.docker.internal`: nginx resolves a variable
+        # proxy_pass through its `resolver` (Docker's embedded DNS), which does
+        # not know that name on native Linux. See the host_gateway_ip fixture.
+        "base_url_container": f"http://{host_gateway_ip}:{port}",
         "proxy_shared_secret": "broker-test-proxy-secret",
     }
     server.should_exit = True

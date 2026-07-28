@@ -249,7 +249,13 @@ services:
       mirage-api: { condition: service_healthy }
       keycloak: { condition: service_healthy }
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/ >/dev/null"]
+      # 127.0.0.1, not localhost: the image ships /etc/hosts entries for BOTH
+      # `127.0.0.1 localhost` and `::1 localhost`, BusyBox wget tries the IPv6
+      # address, and Next.js started with HOSTNAME=0.0.0.0 listens on IPv4
+      # only. The probe then fails with "can't connect to remote host:
+      # Connection refused" against a server that is up and serving — the
+      # container reports Ready in ~200ms and still never turns healthy.
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/ >/dev/null"]
       interval: 10s
       timeout: 5s
       retries: 20

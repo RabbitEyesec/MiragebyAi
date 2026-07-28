@@ -82,8 +82,13 @@ services:
       PUBLIC_KEY: ${MIRAGE_CLIENT_TO_BASTION_PUBLIC_KEY:?run scripts/bootstrap-broker-keys and add the printed lines to .env}
       USER_NAME: employee01
       PASSWORD_ACCESS: "false"
-      PUID: "1000"
-      PGID: "1000"
+      # Must match the OWNER of .broker-keys/bastion_backend_key on this host,
+      # or the ForceCommand cannot read its own onward key ("Load key: Permission
+      # denied") and every routed session is refused. A bind-mounted file keeps
+      # the host's uid; hardcoding 1000 only worked where the developer happened
+      # to be uid 1000. Override in .env when yours differs (`id -u`).
+      PUID: ${MIRAGE_HOST_UID:-1000}
+      PGID: ${MIRAGE_HOST_GID:-1000}
       MIRAGE_API_URL: http://mirage-api:8000
       MIRAGE_BROKER_CERT_SERIAL: ${MIRAGE_SSH_BROKER_CERT_SERIAL:?enroll a BROKER_CLIENT agent and set its certificate_serial here}
       MIRAGE_BROKER_PROXY_SECRET: ${MIRAGE_API_PROXY_SECRET:?must match mirage-api's own proxy_shared_secret}
@@ -93,7 +98,9 @@ services:
       MIRAGE_EMPLOYEE_SSH_PORT: "2222"
     volumes:
       - ../broker/ssh/mirage-route-selector.sh:/custom-cont-init.d/00-install-selector.sh:ro
-      - ../../.broker-keys/bastion_backend_key:/config/.ssh/bastion_backend_key:ro
+      # Dedicated mount point, deliberately outside /config: linuxserver's init
+      # chowns /config recursively and a read-only bind mount in there breaks it.
+      - ../../.broker-keys/bastion_backend_key:/mirage-broker-keys/bastion_backend_key:ro
     ports:
       - "127.0.0.1:2223:2222"
     networks: [mirage-control, mirage-sandbox, mirage-endpoint]

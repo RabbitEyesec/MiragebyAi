@@ -8,6 +8,14 @@
 # sshd_config at it.
 set -e
 
+# The bastion's onward key lives in a dedicated /mirage-broker-keys mount, NOT
+# under /config. Two reasons, both observed: linuxserver's init chowns /config
+# recursively and a read-only bind mount inside it makes that fail, and a key
+# bind-mounted from the host keeps the HOST's uid — which the container user can
+# only read if PUID/PGID are set to match (the compose files and the integration
+# fixture both do). Without that match the ForceCommand dies with
+# `Load key "...": Permission denied` and the session is refused by the backend.
+#
 # Verified empirically: an SSH session's ForceCommand runs with a
 # sanitized/reset environment, NOT the container's own `docker run -e`
 # variables (the symptom: the exec'd onward ssh call failed with "Bad port
@@ -73,12 +81,12 @@ fi
 if [ -n "${SSH_ORIGINAL_COMMAND:-}" ]; then
     exec ssh -tt \
         -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR \
-        -i /config/.ssh/bastion_backend_key -p "$BACKEND_PORT" \
+        -i /mirage-broker-keys/bastion_backend_key -p "$BACKEND_PORT" \
         "employee01@${BACKEND_HOST}" "$SSH_ORIGINAL_COMMAND"
 else
     exec ssh -tt \
         -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR \
-        -i /config/.ssh/bastion_backend_key -p "$BACKEND_PORT" \
+        -i /mirage-broker-keys/bastion_backend_key -p "$BACKEND_PORT" \
         "employee01@${BACKEND_HOST}"
 fi
 SELECTOR

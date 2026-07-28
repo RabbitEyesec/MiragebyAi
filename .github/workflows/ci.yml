@@ -241,8 +241,19 @@ jobs:
       # Bootstrap talks to step-ca and Keycloak over the network, so gate it on
       # those two actually being healthy rather than merely created. `up -d`
       # honours depends_on, but this job must not depend on that subtlety.
-      - name: Wait for step-ca and Keycloak to be reachable
-        run: ./scripts/ci-wait-for-services step-ca keycloak
+      - name: Wait for step-ca, Keycloak and Postgres to be reachable
+        run: ./scripts/ci-wait-for-services step-ca keycloak postgres
+
+      # The schema is NOT created by bringing the stack up. mirage-worker,
+      # mirage-report-worker, mirage-artifact-scanner and mirage-outbox-relay
+      # all query it immediately and die with
+      # `psycopg.errors.UndefinedTable: relation "outbox_events" does not exist`,
+      # then crash-loop under `restart: unless-stopped`. This step was simply
+      # missing; the old health loop never noticed because it read
+      # `docker compose ps` without --all, so crashed services were absent from
+      # the listing rather than reported as broken.
+      - name: Apply database migrations
+        run: make migrate
 
       - name: Bootstrap step-ca provisioners + Keycloak realm
         run: |

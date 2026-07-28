@@ -10,6 +10,7 @@ selection happens once, before the backend channel opens, per §6.2.
 from __future__ import annotations
 
 import contextlib
+import os
 import subprocess
 import time
 import uuid
@@ -225,7 +226,18 @@ async def ssh_bastion(pg_conn_with_routing, ca_config, live_mirage_api_server, s
         .with_env("MIRAGE_EMPLOYEE_SSH_HOST", "employee-ssh-backend")
         .with_env("MIRAGE_EMPLOYEE_SSH_PORT", "2222")
         .with_volume_mapping(str(SELECTOR_SCRIPT), "/custom-cont-init.d/00-install-selector.sh", mode="ro")
-        .with_volume_mapping(str(bastion_backend_keypair["private_path"]), "/config/.ssh/bastion_backend_key", mode="ro")
+        # Dedicated mount point outside /config (linuxserver chowns /config
+        # recursively, which a read-only bind mount inside it breaks), and
+        # PUID/PGID set to THIS user so the container's employee01 owns the
+        # bind-mounted 0600 key. A bind mount keeps the host's uid: on a Linux
+        # CI runner the file is uid 1001 while linuxserver's default PUID is
+        # 1000, so the ForceCommand could not read its own onward key and every
+        # routed session was refused with
+        # `Load key "...": Permission denied` / `Permission denied (publickey)`.
+        # Docker Desktop hides this by remapping bind-mount ownership.
+        .with_volume_mapping(str(bastion_backend_keypair["private_path"]), "/mirage-broker-keys/bastion_backend_key", mode="ro")
+        .with_env("PUID", str(os.getuid()))
+        .with_env("PGID", str(os.getgid()))
         .with_exposed_ports(2222)
         .with_kwargs(
             # Joined at CREATION, not connected afterwards. The backends are
